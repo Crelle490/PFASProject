@@ -1,0 +1,27 @@
+Parameters obtaind from pbtch traning using the bath_hpinn_pfas_tf model 
+without the new way of calculating the concentraction of hydrated electrons
+k1: 1.598952e+09
+k2: 3.437098e+08
+k3: 1.236542e+09
+k4: 3.366738e+09
+k5: 1.815057e+09
+k6: 1.785067e+09
+k7: 1.037204e+09
+
+Parameters obtaind from pbtch traning using the HPINN_Fused_model model 
+with the new way of calculating the concentraction of hydrated electrons
+k1: 2.639920e+09
+k2: 5.693180e+08
+k3: 2.042040e+09
+k4: 5.287709e+09
+k5: 2.998348e+09
+k6: 2.948134e+09
+k7: 1.712626e+09
+
+Generally increas in reaction rate constants with new way of calculating the
+concentraction of hydrated electrons
+
+See plots
+- Batch_traning_with_updated_hydrated_electron_calculation
+- Original_batch_traning_with_old_hydrated_electon_calculation
+For comparison of results for the two methods of calculating the hydrated electron concentraction

@@ -105,8 +105,9 @@ class HPINNPredictor:
     
     def predict_state(self):
         estimation_input = [self.simulation_time, self.initial_state]
-        print(np.shape(self.simulation_time))
         y_pred = self.model.predict(estimation_input)
+        for i in range(0,self.N_sim):
+            self.ekf.predict(self.u)
         return y_pred
     
     def update_input(self):
@@ -119,13 +120,10 @@ class HPINNPredictor:
     def step(self):
         self.set_initial_estimation_state()
         PINN_prediction = self.predict_state()
-        print(np.shape(self.ekf.x))
-        self.ekf.predict(self.u)
         self.ekf.update(self.sensor_measuerment)
-        
-        # Update state of system based on the estimate
-        self.concentractions = [self.ekf.x[1:]]
-        
+        x = self.ekf.x  # Shape (9,)
+        print(self.ekf.K)
+        self.concentractions = [[x[1], x[2], x[3], x[5], x[6], x[7], x[8], x[4]]]  # Extract PFAS concentrations
         # Update time
         self.current_time = self.simulation_time[:,-1].numpy()
         self.set_simulation_time()
@@ -187,7 +185,7 @@ std_dev = 0.01  # adjust noise level as needed
 noise = np.random.normal(mean, std_dev, size=data_array.shape)
 
 # Add noise to data
-noisy_data = data_array + noise
+noisy_data = data_array 
 
 # Simulated sensor data used
 sensor_data_for_simulation = noisy_data[N+1::N+1]
@@ -201,29 +199,28 @@ for sensor_data in sensor_data_for_simulation:
     t_input = predictor.simulation_time
     PINN_prediction, concentractions, sensor_measuerment = predictor.step()
     y_pred = PINN_prediction
-    y_pred_reshaped = y_pred.squeeze(axis=0)
-    t_input_reshaped = t_input.squeeze(axis=0)
-
+    print(type(t_input))
+    y_pred_reshaped = y_pred.reshape(N, 8)
+    t_input_reshaped = t_input.numpy().reshape(N, 1)
+    
     y_preds.append(y_pred_reshaped)
     t_inputs.append(t_input_reshaped)
     sensor_measurements.append(sensor_measuerment)
 
-y_pred = np.array(y_preds)
+y_pred = np.array(y_preds).reshape(len(sensor_data_for_simulation)*N,8)
 print(y_pred.shape)
-t_input = np.array(t_inputs)
+t_input = np.array(t_inputs).reshape(len(sensor_data_for_simulation)*N,1)
 print(t_input.shape)
 sensor_measurement = np.array(sensor_measurements)
 
 def plot_prediction(y_pred,t_input):
-    y_pred = y_pred[0:1, :, :]  # shape: (1, T_sim_max, 5)
-    y_pred = y_pred.squeeze(0)  # shape: (T_sim_max, 5)
-    t = t_input[0]
-    labels = ['C7F15COO-', 'C5F11COO-', 'C3F7COO-', 'C2F5COO-', 'CF3COO-']
+    labels = ['C7F15COO-','C6F13COO-','F-', 'C5F11COO-','C4F9COO-', 'C3F7COO-', 'C2F5COO-', 'CF3COO-']
     for i, label in enumerate(labels):
-        plt.subplot(3, 2, i + 1)
-        plt.plot(t, y_pred[:,i], 'r', label='Predicted reaction')
+        plt.subplot(4, 2, i + 1)
+        plt.plot(t_input, y_pred[:,i], 'r', label='Predicted reaction')
         plt.xlabel('Time (s)')
         plt.ylabel(label)
+        #plt.ylim(-0.015, 0.015)
         plt.grid(True)
         plt.legend()
     plt.show()

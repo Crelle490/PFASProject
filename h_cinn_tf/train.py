@@ -14,16 +14,20 @@ def main():
     # Load experimental data (adjust the path as needed)
     data_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'PFAS_data.csv')
     df = pd.read_csv(data_path)
-    t_true = df['time (s)'].values
-    t_pinn = np.arange(t_true[0], np.round(t_true[-1]), 1.0)
+
+    # Time series
+    t_true = df['time (s)'].values # experimental time series
+    t_pinn = np.arange(t_true[0], np.round(t_true[-1]), 1.0) # predict time series with same span 
+
+    # Extract selective specimens
     y_train = df[['C7F15COO-', 'C5F11COO-', 'C3F7COO-', 'C2F5COO-', 'CF3COO-']].values[np.newaxis, :, :]
-    batch_input = t_pinn[np.newaxis, :, np.newaxis]
+    batch_input = t_pinn[np.newaxis, :, np.newaxis] # shape: (1, time_steps, 1) = (batch, time, features=time_value)
 
     # Define kinetic parameters and initial state
-    k_values = [5.259223e+06, 5.175076e+08, 5.232472e+08, 5.551598e+08, 5.748630e+08, 5.647780e+08, 5.005279e+08]
+    k_values = [5.259223e+06, 5.175076e+08, 5.232472e+08, 5.551598e+08, 5.748630e+08, 5.647780e+08, 5.005279e+08] # Initial guess
     k1, k2, k3, k4, k5, k6, k7 = [np.float32(v) for v in k_values]
-    c_eaq = np.float32(3.69e-12)
-    initial_state = np.array([[1.96e-07, 0, 0, 0, 0, 0, 0, 0]], dtype='float32')
+    c_eaq = np.float32(3.69e-12) # hard-coded hydrated electrons
+    initial_state = np.array([[1.96e-07, 0, 0, 0, 0, 0, 0, 0]], dtype='float32') # IC
 
     # Create and compile the model
     model = create_model(k1, k2, k3, k4, k5, k6, k7, c_eaq, 1.0, initial_state, batch_input.shape, t_pinn, t_true)
@@ -65,7 +69,7 @@ def main():
     # Extract and print the trained kinetic parameters
     rnn_layer = model.layers[0]
     rk_cell = rnn_layer.cell
-    trained_params = {name: 10 ** rk_cell.log_k_values[name].numpy() for name in rk_cell.log_k_values}
+    trained_params = {name: 10 ** rk_cell.log_k_values[name].numpy() for name in rk_cell.log_k_values} # log --> linear
     print("Trained parameters:")
     for name, value in trained_params.items():
         print(f"{name}: {value:.6e}")

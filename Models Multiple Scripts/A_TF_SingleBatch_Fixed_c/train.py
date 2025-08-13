@@ -66,7 +66,7 @@ def main():
     plt.tight_layout()
     results_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'results')
     os.makedirs(results_dir, exist_ok=True)  # Ensure folder exists
-    output_path = os.path.join(results_dir, 'minimal_modelA.png')
+    output_path = os.path.join(results_dir, 'Aminimal_model.png')
     plt.savefig(output_path, dpi=600, bbox_inches='tight')
     plt.show()
 

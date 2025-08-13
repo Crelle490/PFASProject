@@ -38,7 +38,7 @@ def plot_results(t_true, t_pinn, y_train, y_pred_before, y_pred_after):
     # --- SAVE TO PFASProject/results ---
     results_dir = _project_root() / "results"   # <-- absolute path at repo root
     results_dir.mkdir(parents=True, exist_ok=True)
-    out = results_dir / "SingleBatch_AdaptiveC.png"
+    out = results_dir / "CSingleBatch_Adaptive.png"
 
     plt.savefig(out, dpi=600, bbox_inches='tight')   # save BEFORE show
     print(f"Saved plot to: {out}")

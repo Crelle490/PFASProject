@@ -189,7 +189,7 @@ def main():
         plt.legend()
 
     plt.tight_layout()
-    plt.savefig(str(results_dir / "MulipleBatch_fixedD.png"), dpi=600, bbox_inches='tight')
+    plt.savefig(str(results_dir / "DMulipleBatch_fixed.png"), dpi=600, bbox_inches='tight')
     plt.close()
 
     # --- Dump trained params next to config ---

@@ -175,7 +175,7 @@ def main():
         plt.legend()
 
     plt.tight_layout()
-    plt.savefig(str(results_dir / "Adaptive_MultibatchE.png"), dpi=600, bbox_inches='tight')
+    plt.savefig(str(results_dir / "EAdaptive_Multibatch.png"), dpi=600, bbox_inches='tight')
     plt.close()
 
     # Dump trained params

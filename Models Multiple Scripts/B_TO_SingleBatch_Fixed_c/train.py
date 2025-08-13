@@ -102,7 +102,7 @@ def main():
     os.makedirs(results_dir, exist_ok=True)
     results_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'Results')
     os.makedirs(results_dir, exist_ok=True)  # Ensure folder exists
-    output_path = os.path.join(results_dir, 'minimal_modelB.png')
+    output_path = os.path.join(results_dir, 'Bminimal_model.png')
 
     plt.show()
 

@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
 import yaml
-from HPINN_Fused_model import RungeKuttaIntegratorCell, PINNModel, interpolate_predictions 
+from model_testing.HPINN_Fused_model import RungeKuttaIntegratorCell, PINNModel, interpolate_predictions 
 from tensorflow.keras.layers import RNN
 import time
 import matplotlib.pyplot as plt

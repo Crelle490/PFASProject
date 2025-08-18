@@ -10,7 +10,7 @@ from jacobian import build_jacobian_from_config
 import yaml 
 from EKF import ExtendedKalmanFilter
 import matplotlib.pyplot as plt
-
+import matplotlib.animation as animation
 
 here = Path(__file__).resolve().parent          # .../PFASProject/HPINN Predictor
 project_root = here.parent                      # .../PFASProject
@@ -89,33 +89,62 @@ def main():
 
     # ---- Plot simulated PFAS species and F- ----
    
-    # y: (1, T, 8)
+        
     Y = y[0]                              # (T, 8)
     T = Y.shape[0]
-    # If you already have `t` from earlier, use it. Otherwise:
-    t_plot = np.arange(T, dtype=np.float32)  # seconds, dt=1.0
+    t_plot = np.arange(T, dtype=np.float32)
 
     labels = ['C7F15COO-', 'C5F11COO-', 'C3F7COO-', 'C2F5COO-', 'CF3COO-']
 
-    plt.figure(figsize=(9, 6))
-    # 5 PFAS panels
-    for i, label in enumerate(labels):
-        plt.subplot(3, 2, i + 1)
-        plt.plot(t_plot, Y[:, i], label='Prediction')
-        plt.xlabel('Time (s)')
-        plt.ylabel(label)
-        plt.grid(True, alpha=0.3)
-        plt.legend()
+    fig, axes = plt.subplots(3, 2, figsize=(9, 6), sharex=True)
+    axes = axes.reshape(-1)
 
-    # F- panel (bottom-right)
-    plt.subplot(3, 2, 6)
-    plt.plot(t_plot, Y[:, 7], label='F⁻')
-    plt.xlabel('Time (s)')
-    plt.ylabel('F⁻')
-    plt.grid(True, alpha=0.3)
-    plt.legend()
+    # set up subplots + empty lines
+    lines = []
+    for i, label in enumerate(labels):
+        ax = axes[i]
+        (ln,) = ax.plot([], [], label='Prediction')
+        ax.set_xlabel('Time (s)')
+        ax.set_ylabel(label)
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        lines.append(ln)
+
+    # F- subplot (bottom-right)
+    axF = axes[5]
+    (lnF,) = axF.plot([], [], label='F⁻')
+    axF.set_xlabel('Time (s)')
+    axF.set_ylabel('F⁻')
+    axF.grid(True, alpha=0.3)
+    axF.legend()
+    lines.append(lnF)
+
+    def init():
+        for ln in lines:
+            ln.set_data([], [])
+        return lines
+
+    def update(frame):
+        # draw up to current frame
+        tp = t_plot[:frame]
+        for i in range(5):
+            lines[i].set_data(tp, Y[:frame, i])
+        lines[5].set_data(tp, Y[:frame, 7])  # F-
+        # keep axes autoscaled as data grows
+        for ax in axes:
+            ax.relim()
+            ax.autoscale_view()
+        return lines
+
+    # If 5000 frames is slow, set STEP > 1 (e.g., 5 or 10)
+    STEP = 1
+    ani = animation.FuncAnimation(
+        fig, update, frames=range(1, T, STEP),
+        init_func=init, interval=20, blit=False
+    )
 
     plt.tight_layout()
+    plt.show()
 
     # Save figure
     results_dir = os.path.join(project_root, "results")  # or any folder you like

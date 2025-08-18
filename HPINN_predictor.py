@@ -7,7 +7,7 @@ import time
 import matplotlib.pyplot as plt
 from predictor.jacobian import Jacobian
 from predictor.EKF import ExtendedKalmanFilter
-from predictor.kinetic_model import f, h
+from kinetic_model import f, h
 import pandas as pd
 
 class HPINNPredictor:

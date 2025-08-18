@@ -29,14 +29,15 @@ class ExtendedKalmanFilter:
 
     def predict(self, u):
         F = self.F_jacobian(self.x)
-        self.x = self.f(self.x, u, self.k)
+        self.x = self.f(self.x, u, self.k) # Model estimation
         self.P = F @ self.P @ F.T + self.Q
 
     def update(self, z):
+        z=z # measurement estimation
         H = self.H_jacobian(self.x)
         y = z - self.h(self.x)  # Innovation
         S = H @ self.P @ H.T + self.R  # Innovation covariance
-        K = self.P @ H.T @ np.linalg.inv(S)  # Kalman gain
-        self.x = self.x + K @ y
+        K = self.P @ H.T @ np.linalg.inv(S)  # Kalman gain - model vs measurement
+        self.x = self.x + K @ y # fused state estimate
         I = np.eye(len(self.x))
-        self.P = (I - K @ H) @ self.P
+        self.P = (I - K @ H) @ self.P # Updated covariance

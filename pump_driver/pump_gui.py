@@ -4,6 +4,15 @@ from tkinter import ttk, messagebox
 import serial
 import serial.tools.list_ports
 from pump_class import WX10Pump
+from serial.tools import list_ports
+import subprocess
+import threading
+import matplotlib.pyplot as plt
+import numpy as np
+from pathlib import Path
+import sys, os
+
+
 
 DEFAULT_BAUD = 9600
 
@@ -13,6 +22,8 @@ class PumpGUI:
         self.root.title("WX10 Pump Controller")
         self.serial_port = None
         self.pump = None
+        self.project_root = Path(__file__).resolve().parents[1]  # .../PFASProject
+
 
         # --- Connection frame ---
         f_conn = ttk.LabelFrame(root, text="Connection")
@@ -21,10 +32,12 @@ class PumpGUI:
         ttk.Label(f_conn, text="Port:").grid(row=0, column=0, padx=5, pady=5, sticky="e")
         self.port_cb = ttk.Combobox(f_conn, width=20, values=self._list_ports())
         self.port_cb.grid(row=0, column=1, padx=5, pady=5, sticky="w")
-        if self.port_cb["values"]:
-            self.port_cb.current(0)
-        else:
-            self.port_cb.set("/dev/ttyUSB0")  # fallback
+        vals = list(self.port_cb["values"])
+        if "/dev/ttyUSB0" not in vals:
+            vals.append("/dev/ttyUSB0")
+        self.port_cb["values"] = vals
+        self.port_cb.set("/dev/ttyUSB0")  # prefill
+
 
         ttk.Label(f_conn, text="Baud:").grid(row=0, column=2, padx=5, pady=5, sticky="e")
         self.baud_cb = ttk.Combobox(f_conn, width=8, values=[9600, 19200, 38400, 57600, 115200])
@@ -74,6 +87,10 @@ class PumpGUI:
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
+        # --- Predictor frame ---
+        ttk.Button(root, text="Run Predictor", command=self.run_predictor).pack(pady=10)
+
+
     # ------------- Actions -------------
     def connect(self):
         port = self.port_cb.get().strip()
@@ -101,6 +118,58 @@ class PumpGUI:
             self.pump = None
             messagebox.showerror("Connect Error", str(e))
             self.status_var.set("Connection failed")
+
+    def run_predictor(self):
+        def _worker():
+            # Run test.py as a subprocess and capture output
+            process = subprocess.Popen(
+                [sys.executable, str(self.project_root / "predictor" / "test.py")],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                env={**os.environ, "PYTHONUNBUFFERED": "1"}  # stream prints live
+            )
+
+
+            concentrations = []
+            timesteps = []
+
+            plt.ion()
+            fig, ax = plt.subplots()
+            line, = ax.plot([], [], label="F⁻ concentration")
+            ax.set_xlabel("Time step")
+            ax.set_ylabel("Concentration")
+            ax.legend()
+            plt.show(block=False)
+
+            for line_out in process.stdout:
+                print(line_out.strip())  # Still print console logs
+                if "first timestep:" in line_out or "last timestep:" in line_out:
+                    continue
+                if "EKF after" in line_out:
+                    # Example parse if test.py prints values
+                    parts = line_out.strip().split()
+                    if "F-" in parts:
+                        f_val = float(parts[4])
+                        t_idx = len(concentrations)
+                        concentrations.append(f_val)
+                        timesteps.append(t_idx)
+
+                        # Update live plot
+                        line.set_xdata(timesteps)
+                        line.set_ydata(concentrations)
+                        ax.relim()
+                        ax.autoscale_view()
+                        plt.pause(0.01)
+
+            process.wait()
+            plt.ioff()
+            plt.show()
+
+        # Run worker in separate thread
+        threading.Thread(target=_worker, daemon=True).start()
+
 
     def disconnect(self):
         try:
@@ -172,13 +241,23 @@ class PumpGUI:
         return True
 
     def _list_ports(self):
-        ports = [p.device for p in serial.tools.list_ports.comports()]
+        ports = [p.device for p in list_ports.comports()]
+        # Always offer common Linux device names, even if not auto-detected
+        for cand in ("/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyACM0"):
+            if cand not in ports:
+                ports.append(cand)
         return ports
 
     def _refresh_ports(self):
-        self.port_cb["values"] = self._list_ports()
-        if self.port_cb["values"]:
-            self.port_cb.current(0)
+        vals = self._list_ports()
+        if "/dev/ttyUSB0" not in vals:
+            vals.append("/dev/ttyUSB0")
+        self.port_cb["values"] = vals
+        # keep current selection if valid; otherwise set default
+        cur = self.port_cb.get()
+        if cur not in vals:
+            self.port_cb.set("/dev/ttyUSB0")
+
 
     def on_close(self):
         try:

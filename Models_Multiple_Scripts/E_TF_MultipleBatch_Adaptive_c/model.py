@@ -6,8 +6,8 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import RMSprop
 from tensorflow.keras.optimizers.schedules import PiecewiseConstantDecay
 
-from integrator import RungeKuttaIntegratorCell
-from loss import create_loss_fn_multi
+from Models_Multiple_Scripts.E_TF_MultipleBatch_Adaptive_c.integrator import RungeKuttaIntegratorCell
+from Models_Multiple_Scripts.E_TF_MultipleBatch_Adaptive_c.loss import create_loss_fn_multi 
 
 class PINNModel(tf.keras.Model):
     def __init__(self, integrator_cell):

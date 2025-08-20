@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
 import yaml
-from model_testing.HPINN_Fused_model import RungeKuttaIntegratorCell, PINNModel, interpolate_predictions 
+from HPINN_Fused_model import RungeKuttaIntegratorCell, PINNModel, interpolate_predictions 
 from tensorflow.keras.layers import RNN
 import time
 import matplotlib.pyplot as plt
@@ -23,7 +23,6 @@ with open("./config/trained_params.yaml", "r") as file:
 
 with open("./config/covariance_params.yaml", "r") as file:
     cov_params = yaml.safe_load(file)
-
 # Assign initial conditions
 pH = init_vals["pH"]
 c_pfas_init = init_vals["c_pfas_init"]
@@ -80,7 +79,7 @@ y_pred = model.predict([dummy_input, initial_state])
 
 # Save only the F- results
 print(np.shape(y_pred))
-results = y_pred[0,:,-1]
+results = y_pred[0,:,7]
 
 base_dir = os.getcwd()  # current working directory
 file_path = os.path.join(base_dir, "data", "simulated_F_concentraction.csv")

@@ -34,8 +34,6 @@ class ExtendedKalmanFilter:
 
         # (Optional) monitor spectral radius for sanity
         rho = np.max(np.abs(np.linalg.eigvals(F)))
-        print("rho(F) =", float(rho))
-
         # Propagate state
         self.x = x
 

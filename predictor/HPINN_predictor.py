@@ -126,7 +126,6 @@ class HPINNPredictor:
         PINN_prediction = self.predict_state()
         self.ekf.update(self.sensor_measuerment)
         x = self.ekf.x  # Shape (8,)
-        print(self.ekf.K)
         self.concentractions = [x]  # Extract PFAS concentrations
         # Update time
         self.current_time = self.simulation_time[:,-1].numpy()
@@ -219,7 +218,7 @@ class HPINNPredictor:
         """
         Build the Extended Kalman Filter (EKF).
         """
-        
+
         # Assign initial state
         x0 = np.array([self.c_pfas_init] + [0.0]*7)  # shape (1,8)
 

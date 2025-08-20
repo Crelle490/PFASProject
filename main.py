@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from predictor.kinetic_model import f 
-from HPINN_predictor import HPINNPredictor
+from predictor.HPINN_predictor import HPINNPredictor
 import pandas as pd
 
 # --- Setup predictor and data ---

@@ -9,10 +9,9 @@ import pandas as pd
 import os
 
 # Import custom modules for PINN
-from HPINN_Fused_model import RungeKuttaIntegratorCell, PINNModel, interpolate_predictions 
+from .HPINN_Fused_model import RungeKuttaIntegratorCell, PINNModel, interpolate_predictions 
 
 # Import custom modules for EKF
-from predictor.jacobian_rk4 import Jacobian
 from predictor.EKF import ExtendedKalmanFilter
 from predictor.kinetic_model import f, h
 
@@ -136,7 +135,10 @@ class HPINNPredictor:
         return PINN_prediction, self.concentractions, self.sensor_measuerment
     
     def update_models(self):
-            
+        """
+        Update freqeuncy and dt to change time scale of the HPINN model.
+        This is primarily used for evaluation and testing purposes.
+        """
         # Set simulation resolution
         self.period = 1/self.freqeuncy
         self.N_sim = int(self.period/self.dt_sim)
@@ -161,6 +163,7 @@ class HPINNPredictor:
                   save_path="data/simulated_F_concentraction.csv"):
         """
         Run the current HPINN model forward and save the F- (fluoride) series.
+        Used to generate synthetic data for testing and evaluation. 
 
         Parameters
         ----------
@@ -171,16 +174,6 @@ class HPINNPredictor:
             If False, simulate continuing from current_time.
         save_path : str
             Where to save the CSV. Default: 'data/simulated_F_concentraction.csv'
-        also_save_raw_no_ext : bool
-            If True, also save a copy without extension at 'data/simulated_F_concentraction'
-            to match older code that reads that exact path.
-
-        Returns
-        -------
-        t : np.ndarray, shape (steps,)
-            Time vector used for the simulation (seconds).
-        F : np.ndarray, shape (steps,)
-            Simulated fluoride concentration (last state of the PINN output).
         """
         # ----- build time grid -----
         if steps is None:
@@ -206,6 +199,10 @@ class HPINNPredictor:
         np.savetxt(save_path, F, delimiter=",", fmt="%.10f")
 
     def _build_HPINN(self):
+        """
+        Build the HPINN model using the Runge-Kutta integrator cell and PINNModel.
+        This method initializes the model and loads the trained weights.
+        """
         # Build integrator cell and model
         self.rk_cell = RungeKuttaIntegratorCell(self.k1, self.k2, self.k3, self.k4, self.k5, self.k6, self.k7, self.params, self.c_cl, self.c_so3, self.pH, self.dt_sim, self.init_state,for_prediction=True)
         self.model = PINNModel(self.rk_cell, num_steps=self.N_sim)  # Adjust num_steps based on desired simulation time
@@ -219,7 +216,10 @@ class HPINNPredictor:
         self.model.load_weights("./checkpoints/pinn_model.weights.h5")
     
     def _build_EKF(self):
-
+        """
+        Build the Extended Kalman Filter (EKF).
+        """
+        
         # Assign initial state
         x0 = np.array([self.c_pfas_init] + [0.0]*7)  # shape (1,8)
 

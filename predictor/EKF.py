@@ -74,4 +74,8 @@ class ExtendedKalmanFilter:
         In this case, we assume we measure the fluoride concentration.
         """
         return np.array([x[7]]) # fluoride concentration is the 8th state (index 7)
+    
+    def set_c_eaq(self, c_eaq):
+        self.J.update(c_eaq=c_eaq)
+        self.F = self.J.J_reaction 
 

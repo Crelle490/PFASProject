@@ -50,3 +50,11 @@ class Jacobian:
         H = np.zeros((1, len(self.x)))
         H[0, 7] = 1  # fluoride is the 8th state (index 7), since the electron state is not insluced in the state matrix
         self.J_observation = H
+    
+    def update(self, k=None, c_eaq=None, dt=None):
+        # Updates the Jacobian based on changes in the parameters. Primarily used for updates in eqa
+        if k is not None:      self.k = k
+        if c_eaq is not None:  self.c_eaq = c_eaq
+        if dt is not None:     self.dt = dt
+        self.continuous_A_from_params()
+        self.rk4_transition_jacobian()

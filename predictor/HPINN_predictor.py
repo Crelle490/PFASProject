@@ -13,7 +13,11 @@ from .HPINN_Fused_model import RungeKuttaIntegratorCell, PINNModel, interpolate_
 
 # Import custom modules for EKF
 from predictor.EKF import ExtendedKalmanFilter
-from predictor.kinetic_model import f, h
+#from predictor.kinetic_model import f, h
+
+REACTION_RATE_SO3_EAQ = 1.5e6
+REACTION_RATE_CL_EQA = 1e6
+BETA_J = 2.57e4
 
 class HPINNPredictor:
     def __init__(self,dt,sensor_frequency):
@@ -59,9 +63,6 @@ class HPINNPredictor:
         self.init_state[0, 0] = self.c_pfas_init  # Set PFAS initial concentration
         self.concentractions = self.init_state
 
-        # Set initial input value
-        self.u = 0
-
         # Initialize simulation time
         self.set_simulation_time()
 
@@ -82,9 +83,9 @@ class HPINNPredictor:
         numerator = self.rk_cell.generation_of_eaq()
 
         # Additional kinetic parameters.
-        k_so3_eaq = 1.5e6
-        k_cl_eaq = 1e6
-        beta_j = 2.57e4
+        k_so3_eaq = REACTION_RATE_SO3_EAQ
+        k_cl_eaq = REACTION_RATE_CL_EQA
+        beta_j = BETA_J
 
         denominator = self.k1 * self.c_pfas_init + beta_j + k_so3_eaq * self.rk_cell.c_so3 + k_cl_eaq * self.rk_cell.c_cl
 
@@ -111,23 +112,44 @@ class HPINNPredictor:
         estimation_input = [self.simulation_time, self.initial_state]
         y_pred = self.model.predict(estimation_input)
         for i in range(0,self.N_sim):
-            self.ekf.predict(y_pred[0,i,:],u=self.u)
+            self.ekf.predict(y_pred[0,i,:])
         return y_pred
     
-    def update_input(self):
-        # If the addetives change the concentraction of eaq this function can be updated
-        self.u = 0
+    def update_input(self, c_cl=None, c_so3=None, pH=None):
+        if c_cl is not None:
+            self.c_cl = c_cl
+            self.rk_cell.c_cl = c_cl
+        if c_so3 is not None:
+            self.c_so3 = c_so3
+            self.rk_cell.c_so3 = c_so3
+        if pH is not None:
+            self.pH = pH
+            self.rk_cell.pH = pH
+
+        # recompute c_eaq from additives and push to EKF
+        self.calculate_eqa()
+        self.ekf.set_c_eaq(self.c_eaq)
     
     def get_sensor_measuerment(self,z):
         self.sensor_measuerment = z
     
     def step(self):
+        # Initially set the state of the reaction based on initial state or previous states
         self.set_initial_estimation_state()
+
+        # Based on the updtated state, predict the future states using the HPINN model
         PINN_prediction = self.predict_state()
+
+        # Update the state based on the sensor measuerment and expected state
         self.ekf.update(self.sensor_measuerment)
+
+        # Extract the estimated state from the EKF
         x = self.ekf.x  # Shape (8,)
+
+        # Assign the estimated state as the new state for the next step
         self.concentractions = [x]  # Extract PFAS concentrations
-        # Update time
+
+        # Update time to match current time
         self.current_time = self.simulation_time[:,-1].numpy()
         self.set_simulation_time()
 
@@ -137,6 +159,7 @@ class HPINNPredictor:
         """
         Update freqeuncy and dt to change time scale of the HPINN model.
         This is primarily used for evaluation and testing purposes.
+        Can be used to change the prediction horizion of the model.
         """
         # Set simulation resolution
         self.period = 1/self.freqeuncy
@@ -218,7 +241,6 @@ class HPINNPredictor:
         """
         Build the Extended Kalman Filter (EKF).
         """
-
         # Assign initial state
         x0 = np.array([self.c_pfas_init] + [0.0]*7)  # shape (1,8)
 

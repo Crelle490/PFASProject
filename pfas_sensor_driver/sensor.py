@@ -47,7 +47,7 @@ class FluorideIonSensorModbus:
         port: str,
         slave: int,
         baudrate: int = 9600,
-        parity: str = "N",         # "N", "E", or "O"
+        parity: str = "E",         # "N", "E", or "O"
         stopbits: int = 1,         # 1 or 2
         bytesize: int = 8,         # instrument menus imply 8 data bits as usual
         timeout: float = 1.0,

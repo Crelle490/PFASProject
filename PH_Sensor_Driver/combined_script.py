@@ -170,6 +170,7 @@ class FluorideAnalyzer(FloatMapDevice):
         return self.read_value("fluoride_mgL")
 
 
+MEASUERMENT_INTERVAL = 10.0  # seconds between readings
 # --------------------------
 # Example usage
 # --------------------------
@@ -185,6 +186,7 @@ def main():
     )
     bus = ModbusBus(cfg)
 
+    
     try:
         bus.open()
 
@@ -199,7 +201,7 @@ def main():
             }
             print(readings)
             # a small delay keeps the line calm; tune as needed
-            time.sleep(0.5)
+            time.sleep(MEASUERMENT_INTERVAL)
 
     finally:
         bus.close()

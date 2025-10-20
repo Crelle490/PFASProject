@@ -1,0 +1,31 @@
+import gpiod
+import time
+from gpiod.line import Direction, Value
+
+# GPIO-numre (BCM-notation)
+LED_PINS = [23, 24, 25]   # Pin 16 og 18 på headeren
+CHIP_PATH = "/dev/gpiochip4"
+
+with gpiod.Chip(CHIP_PATH) as chip:
+    # Konfiguration for begge pins
+    line_cfg = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Value.INACTIVE)
+
+    # Bed om begge linjer i én request
+    req = chip.request_lines(
+        consumer="LEDs",
+        config={pin: line_cfg for pin in LED_PINS}
+    )
+
+    try:
+        while True:
+            # Tænd GPIO23, sluk GPIO24
+            req.set_value(23, Value.ACTIVE)
+            req.set_value(24, Value.ACTIVE)
+            time.sleep(5)
+
+            # Skift omvendt
+            req.set_value(23, Value.INACTIVE)
+            req.set_value(25, Value.ACTIVE)
+            time.sleep(5)
+    finally:
+        req.release()

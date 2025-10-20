@@ -1,0 +1,135 @@
+Type: 8 rollers
+99% speed: [10.7 ml, 1 min;
+            21.5ml, 2 min;
+            31.9 ml, 3 min]
+50% speed: [5.1 ml, 1 min;
+            10.5 ml, 2 min;
+            16.0 ml, 3 min]
+20% speed: [2.1 ml, 1 min;
+            4.2 ml, 2 min;
+            6.3 ml, 3 min]
+
+Type: 4 rollers
+99% speed: [19.4 ml, 1 min;
+            38.5 ml, 2 min;
+            19.5 ml, 1 min]
+99% speed: [19.3 ml, 1 min;
+            38.3 ml, 2 min;
+            19.4 ml, 1 min]
+80% speed: [15.8 ml, 1 min;
+            31.0 ml, 2 min;
+            46.1 ml, 3 min]
+50% speed: [9.7 ml, 1 min;
+            19.3 ml, 2 min;
+            29.0 ml, 3 min]
+30% speed: [5.9 ml, 1 min;
+            11.5 ml, 2 min;
+            5.9 ml, 1 min]
+
+Pump ID 1
+25% speed: [2.96 g, 1 min;
+            5.90 g, 2 min;
+            8.86 g, 3 min;
+            11.79 g, 4 min]
+50% speed: [5.94 g, 1 min;
+            11.84 g, 2 min;
+            17.75 g, 3 min;
+            23.65 g, 4 min]
+75% speed: [8.97 g, 1 min;
+            17.88 g, 2 min;
+            26.78 g, 3 min;
+            35.67 g, 4 min]
+100% speed: [11.89 g, 1 min;
+            23.73 g, 2 min;
+            35.59g, 3 min;
+            47.45 g, 4 min]
+
+
+Pump ID 2
+25% speed: [2.64 g, 1 min;
+            5.26 g, 2 min;
+            7.89 g, 3 min;
+            10.53 g, 4 min]
+50% speed: [5.28 g, 1 min;
+            10.55 g, 2 min;
+            15.83 g, 3 min;
+            21.11 g, 4 min]
+75% speed: [7.91 g, 1 min;
+            15.73 g, 2 min;
+            23.76 g, 3 min;
+            31.70 g, 4 min]
+99% speed: [10.47 g, 1 min;
+            20.91 g, 2 min;
+            31.39 g, 3 min;
+            41.85 g, 4 min]
+
+Pump ID 3
+25% speed: [2.84 g, 1 min;
+            5.67 g, 2 min;
+            8.49 g, 3 min;
+            11.30 g, 4 min]
+50% speed: [5.67 g, 1 min;
+            11.33 g, 2 min;
+            17.01 g, 3 min;
+            22.66 g, 4 min]
+75% speed: [8.50 g, 1 min;
+            17.03 g, 2 min;
+            25.52 g, 3 min;
+            34.02 g, 4 min]
+99% speed: [11.38 g, 1 min;
+            22.76 g, 2 min;
+            34.14 g, 3 min;
+            45.48 g, 4 min]
+
+Pump ID 6
+25% speed: [2.19 g, 0.5 min;
+            4.38 g, 1 min;
+            6.60 g, 1.5 min;
+            8.80 g, 2 min]
+99% speed: [4.45 g, 0.5 min;
+            8.91 g, 1 min;
+            13.34 g, 1.5 min;
+            17.82 g, 2 min]
+75% speed: [7.39 g, 0.5 min;
+            14.63 g, 1 min;
+            21.96 g, 1.5 min;
+            , 2 min]
+99% speed: [10.20 g, 0.5 min;
+            19.87 g, 1 min;
+            29.54 g, 1.5 min;
+            39.19 g, 2 min]
+
+Pump ID 6
+25% speed: [2.19 g, 0.5 min;
+            4.38 g, 1 min;
+            6.60 g, 1.5 min;
+            8.80 g, 2 min]
+99% speed: [4.45 g, 0.5 min;
+            8.91 g, 1 min;
+            13.34 g, 1.5 min;
+            17.82 g, 2 min]
+75% speed: [6.65 g, 0.5 min;
+            13.34 g, 1 min;
+            20.01 g, 1.5 min]
+99% speed: [8.71 g, 0.5 min;
+            17.55 g, 1 min;
+            26.38 g, 1.5 min;
+            35.22 g, 2 min]
+
+Pump ID 7
+25% speed: [2.39 g, 0.5 min;
+            4.80 g, 1 min;
+            7.20 g, 1.5 min;
+            9.61 g, 2 min]
+50% speed: [9.68 g, 1 min;
+            19.34 g, 2 min;
+            28.99 g, 3 min;
+            38.65 g, 4 min]
+75% speed: [14.57 g, 1 min;
+            29.12 g, 2 min;
+            43.66 g, 3 min;
+            58.13 g, 4 min]
+99% speed: [19.17 g, 1 min;
+            38.32 g, 2 min;
+            19.23 g, 1 min;
+            38.41 g, 2 min]

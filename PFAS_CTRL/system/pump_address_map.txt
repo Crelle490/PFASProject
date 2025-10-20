@@ -1,0 +1,8 @@
+Description,            address
+Mix to reaction chamber, 1
+PFAS,                    2
+C1,                      3
+Buffer,                  4
+Water,                   5
+Holding to valves,       6
+C2,                      7

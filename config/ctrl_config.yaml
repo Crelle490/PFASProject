@@ -1,0 +1,7 @@
+pump:
+  port: "/dev/ttyUSB0"     # or /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_XXXX-if00-port0
+  address: 1
+  baudrate: 9600
+  parity: "E"
+  stopbits: 1
+  timeout: 0.8

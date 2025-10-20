@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import os
 
-from flouride_sensor import SerialConfig, FluorideAnalyzer
+from .flouride_sensor import SerialConfig, FluorideAnalyzer
 
 # ---- Config ----
 PORT = "/dev/ttyUSB0"

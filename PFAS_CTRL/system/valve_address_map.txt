@@ -1,0 +1,3 @@
+description,    normaly open,          normaly closed
+valve 1     ,   to sensors,           to outlet
+valve 2     ,   to mixing chamber,    to valve 1

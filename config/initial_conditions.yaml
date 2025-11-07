@@ -1,4 +1,11 @@
 pH: 5.7
 c_pfas_init: 9.6e-7
-c_cl: 0.0
-c_so3: 0.0
+c_cl_0: 0.0
+c_so3_0: 0.0
+t_r: 1200  # total reaction time
+n_batches: 10
+Vi: 0.500 # initial volume
+Vr: 0.030 # reactor volume
+Vmax: 0.500 # maximum volume
+V_sens: 0.01 # volume sampled each step
+

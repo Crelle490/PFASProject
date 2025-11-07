@@ -14,7 +14,7 @@ try:
     from E_TF_MultipleBatch_Adaptive_c.model import create_model
 except Exception:
     here = Path(__file__).resolve().parent
-    model_dir = (here / ".." / "Models Multiple Scripts" / "E_TF_MultipleBatch_Adaptive_c").resolve()
+    model_dir = (here / ".." / "Models_Multiple_Scripts" / "E_TF_MultipleBatch_Adaptive_c").resolve()
     if str(model_dir) not in sys.path:
         sys.path.insert(0, str(model_dir))
     from model import create_model  # noqa: E402

@@ -16,3 +16,5 @@ epsilon_so3_254: 21.22
 phi_so3_254: 0.11
 epsilon_pfas_185: 2689.5
 epsilon_pfas_254: 28.8
+c_cl: 3.0 # M solution
+c_so3: 1.0 # M solution

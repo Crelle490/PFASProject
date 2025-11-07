@@ -40,6 +40,10 @@ class RungeKuttaIntegratorCell(Layer):
         params = {name: 10.0 ** log_v for name, log_v in self.log_k_values.items()}
         y = states[0]  # shape: (batch, 8)
 
+        # update catalyst based on input
+        self.c_cl = float(inputs[0])
+        self.c_so3 = float(inputs[1])
+
         # RK4 increments
         k1 = self._fun(y, params) * self.dt
         k2 = self._fun(y + 0.5 * k1, params) * self.dt

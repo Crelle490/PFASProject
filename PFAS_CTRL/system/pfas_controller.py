@@ -586,7 +586,122 @@ class PFASController:
 
 
     # 5) Add additional catalyst to stirrer
-        # reuse 1)
+    def mapMPC2pump(
+        self,
+        u_prev,                # [SO3, Cl] in mol/L
+        u_k,                   # [SO3, Cl] in mol/L (MPC target)
+        *,
+        Vs_ml: float,          # current batch volume in mixer [mL]
+        Cc_so3: float,         # stock conc SO3 [mol/L]
+        Cc_cl: float,          # stock conc Cl  [mol/L]
+        pump_so3: str = "c1",
+        pump_cl: str  = "c2",
+        speed_pct: float = 99.0,
+        cw: bool = True,
+        eps: float = 1e-12,
+        cap_frac: float = 0.95,   # optional: cap Δu < cap_frac*Cc for safety
+    ) -> dict:
+        """
+        Compute ΔV for SO3 and Cl from Δu and add them by running both pumps at full speed.
+        Each pump stops when its own volume target is met. Returns a log dict and updates volume.
+        """
+        import time
+        import numpy as np
+
+        u_prev = np.asarray(u_prev, float).ravel()
+        u_k    = np.asarray(u_k,    float).ravel()
+        if u_prev.size != 2 or u_k.size != 2:
+            raise ValueError("u_prev and u_k must be length-2 arrays [SO3, Cl] in mol/L.")
+
+        # current volume (L)
+        V_L = float(Vs_ml) / 1000.0
+
+        # Δu (mol/L) and positive parts
+        dC_so3 = float(u_k[0] - u_prev[0])
+        dC_cl  = float(u_k[1] - u_prev[1])
+        dC_so3 = max(0.0, dC_so3)
+        dC_cl  = max(0.0, dC_cl)
+
+        # optional safety cap to avoid ΔC -> Cc singularity
+        if dC_so3 >= cap_frac * Cc_so3:
+            dC_so3 = cap_frac * Cc_so3
+        if dC_cl  >= cap_frac * Cc_cl:
+            dC_cl  = cap_frac * Cc_cl
+
+        # per-channel dose volumes (L): Vc = (ΔC * V)/(Cc - ΔC)
+        def _dose_vol(deltaC, Cc, V_L_):
+            if deltaC <= 0.0:
+                return 0.0
+            denom = max(Cc - deltaC, eps)
+            return (deltaC * V_L_) / denom
+
+        Vc_so3_L = _dose_vol(dC_so3, Cc_so3, V_L)
+        Vc_cl_L  = _dose_vol(dC_cl,  Cc_cl,  V_L)
+
+        # convert to mL
+        Vc_so3_ml = 1000.0 * Vc_so3_L
+        Vc_cl_ml  = 1000.0 * Vc_cl_L
+
+        # flows at full speed
+        q_so3 = self.flow_rate_for_pump(pump_so3, speed_pct)  # mL/min
+        q_cl  = self.flow_rate_for_pump(pump_cl,  speed_pct)  # mL/min
+        if Vc_so3_ml > 0 and q_so3 <= 0:
+            raise ValueError(f"Estimated flow for {pump_so3} at {speed_pct}% is <= 0")
+        if Vc_cl_ml > 0 and q_cl <= 0:
+            raise ValueError(f"Estimated flow for {pump_cl} at {speed_pct}% is <= 0")
+
+        # run times for each pump (s) at full speed
+        T_so3 = (Vc_so3_ml / q_so3) * 60.0 if Vc_so3_ml > 0 else 0.0
+        T_cl  = (Vc_cl_ml  / q_cl)  * 60.0 if Vc_cl_ml  > 0 else 0.0
+
+        # start both; stop each on its own deadline
+        addr_so3 = self.pump_addrs[pump_so3]
+        addr_cl  = self.pump_addrs[pump_cl]
+
+        now = time.monotonic()
+        deadlines = {}
+        if Vc_so3_ml > 0:
+            self.pump.set_speed(speed_pct, run=True, cw=cw, address=addr_so3)
+            deadlines["so3"] = now + T_so3
+        if Vc_cl_ml > 0:
+            self.pump.set_speed(speed_pct, run=True, cw=cw, address=addr_cl)
+            deadlines["cl"] = now + T_cl
+
+        try:
+            while deadlines:
+                t = time.monotonic()
+                to_stop = [k for k, d in deadlines.items() if t >= d]
+                for k in to_stop:
+                    if k == "so3":
+                        self.pump.stop(address=addr_so3)
+                    else:
+                        self.pump.stop(address=addr_cl)
+                    deadlines.pop(k, None)
+                if deadlines:
+                    time.sleep(0.05)
+        finally:
+            # safety stops
+            try: self.pump.stop(address=addr_so3)
+            except Exception: pass
+            try: self.pump.stop(address=addr_cl)
+            except Exception: pass
+
+        # update batch volume
+        V_new_ml = Vs_ml + Vc_so3_ml + Vc_cl_ml
+
+        return {
+            "delta_u_M": {"so3": dC_so3, "cl": dC_cl},
+            "dose_ml": {"so3": Vc_so3_ml, "cl": Vc_cl_ml, "total": Vc_so3_ml + Vc_cl_ml},
+            "speeds_percent": {"so3": float(speed_pct) if Vc_so3_ml > 0 else 0.0,
+                               "cl":  float(speed_pct) if Vc_cl_ml  > 0 else 0.0},
+            "flows_ml_min": {"so3": q_so3 if Vc_so3_ml > 0 else 0.0,
+                             "cl":  q_cl  if Vc_cl_ml  > 0 else 0.0},
+            "run_time_s": {"so3": T_so3, "cl": T_cl},
+            "Vs_ml_before": float(Vs_ml),
+            "Vs_ml_after":  float(V_new_ml),
+            "pumps": {"so3": pump_so3, "cl": pump_cl},
+        }
+
 
     # 6) exit fluid
     def exit_fluid(

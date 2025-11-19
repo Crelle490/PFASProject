@@ -27,6 +27,7 @@ class GPIOCtrl:
         pin_map: Mapping[str, int] = None,
         active_low: bool = False,
         init_off: bool = True,
+        logger=None,
     ):
         self.chip_path = chip_path
         self.pin_map = dict(pin_map or self.DEFAULT_MAP)
@@ -37,6 +38,7 @@ class GPIOCtrl:
 
         off = Value.ACTIVE if active_low else Value.INACTIVE
         self._default_value = off if init_off else None  # None => leave to caller after open()
+        self.logger = logger
 
     # --- lifecycle ---
     def open(self) -> "GPIOCtrl":
@@ -93,6 +95,11 @@ class GPIOCtrl:
         val = self._ON if state else self._OFF
         for p in pins:
             self._req.set_value(p, val)
+            if self.logger is not None:
+                name = self._from_pin(p)  # or use 'valve1'/'valve2'
+                if name in ("valve1", "valve2"):
+                    ch = "valve_1" if name == "valve1" else "valve_2"
+                    self.logger.log(ch, 1 if state else 0)
 
     def on(self, which: NameOrPin | Iterable[NameOrPin]) -> None:
         self.set(which, True)

@@ -158,7 +158,7 @@ def rk4_interval_map(f: Callable[[ca.SX, ca.SX], ca.SX], x0: ca.SX, u: ca.SX, dt
 
 def dilution_factor(du: ca.DM, Vs: ca.DM) -> ca.DM:
     """ Compute dilution factor over one control interval. """
-    gamma = 1 - du / (Vs - du)
+    gamma = 1 - du / (Vs + du)
     return gamma
 
 # Build map x_next = Phi(x,u) over one control interval Ts
@@ -249,17 +249,16 @@ def stage_cost_sym_lex(xk, uk, uk_prev,
     du_quad = ca.sum1(Rd_c * (du_norm**2))
 
     # Dynamic lexicographic weights over PFAS_1..PFAS_7
-    w_dyn = _priority_weights_sym(xk, taus,z_scale, sharp=sharp)   # (7x1)
-    w_dyn = ca.DM.ones(7,1)
+    #w_dyn = _priority_weights_sym(xk, taus,z_scale, sharp=sharp)   # (7x1)
+    w_dyn = ca.DM.ones(7,1) # don't use priority weights for now
 
     # Focused PFAS penalty: sum_i w_i * (x_i/z)^2 over i=1..7
     x7 = xk[0:7] / zsc_c[0:7] 
 
+    # Penalize F- when away from final target (not used right now)
     L_focus = qx * ca.sum1(w_dyn * (x7**2))
     F_final = c_pfas_init*2*(NX-1)
-
-    # Optional total PFAS pressure to avoid indecision around thresholds
-    L_sum = q_sum * ((F_final-xk[-1]) / zsc_c[-1])**2
+    L_sum = 0 #q_sum * ((F_final-xk[-1]) / zsc_c[-1])**2
 
     return L_focus + L_sum + u_quad + du_quad
 
@@ -273,14 +272,18 @@ def terminal_cost_sym_lex(xN, qf: float, z_scale, taus, sharp, qf_sum,c_pfas_ini
       - qf_sum: optional small terminal pressure on total ΣPFAS
     """
     zsc_c = z_scale + 1e-30
-    w_dyn_N = _priority_weights_sym(xN, taus,z_scale, sharp=sharp,)
-    #w_dyn_N = np.ones((7,))
+    #w_dyn_N = _priority_weights_sym(xN, taus,z_scale, sharp=sharp,)
+    w_dyn_N = np.ones((7,)) # don't use priority weights for now
 
-
+    # Termial cost of PFAS specis
     x7N = xN[0:7] / zsc_c[0:7]
-    F_final = c_pfas_init*2*(NX-1)
     L_focus_N = qf * ca.sum1(w_dyn_N * (x7N**2))
-    L_sum_N   = qf_sum * ((xN[-1]-F_final)/ zsc_c[-1])**2
+
+
+    # Penalize F- when terminal away from final target (not used right now)
+    F_final = c_pfas_init*2*(NX-1)
+    L_sum_N   = 0 #qf_sum * ((xN[-1]-F_final)/ zsc_c[-1])**2
+
     return L_focus_N + L_sum_N
 
 
@@ -359,12 +362,14 @@ def build_single_shoot_nlp(Phi: ca.Function,
         Vc2 = vol_from_deltaC_safe(dC2, Cc2, Vs, eps=1e-12)
 
         #  Total volume after addition
-        Vsum = Vc1 + Vc2
+        Vs = Vs - V_sens # update volume after sensing
+
+        Vsum = Vc1 + Vc2 # total added volume due to catalyst addition
         gamma = dilution_factor(Vsum, Vs)
         
-        Vs = Vs - Vsum - V_sens 
+        Vs = Vs + Vsum # update volume after addition
 
-        xk = xk*gamma
+        xk = xk*gamma # apply dilution to state
         J += stage_cost_sym_lex(xk, uk, up, qx, R, Rd, zsc, uscale, taus, sharp, q_sum,c_pfas_init=c_pfas_init) # stage cost
         xk = Phi(xk, uk)  # x_{k+1}
         up = uk
@@ -373,51 +378,71 @@ def build_single_shoot_nlp(Phi: ca.Function,
     
      
     # Create constraints vector G and bounds lbg, ubg
-    g = [] # rate constraints
-    lbg = []; ubg = [] # bounds constraints
-    up = u_prev0/uscale
-    eps=1e-12
-    Vs = Vs0/V_max
-    V_sens_norm = V_sens/V_max
-    Cc1 = C_c[0]/uscale[0]  # SO3 feed concentration
-    Cc2 = C_c[1]/uscale[1]  # Cl feed concentration
- 
+        # Create constraints vector G and bounds lbg, ubg
+    g = []  # constraint expressions
+    lbg = []
+    ubg = []
+
+    # Use PHYSICAL units here (no normalization)
+    up  = u_prev0        # previous input (physical [M])
+    eps = 1e-12
+
+    Vs = Vs0             # current working volume [same units as Vs0, V_sens, V_max]
+    Cc1 = C_c[0]         # SO3 stock concentration [M]
+    Cc2 = C_c[1]         # Cl stock concentration  [M]
+
     for k in range(N):
-        uk = U_k(k)  # (2x1)
-        uk = uk/uscale
-        # --- rate constraints ---
-        #g.append(uk - up)
-        #lbg += list([0.0,0.0])       # e.g. [-..., -...]
-        #ubg += list(du_max)   # e.g. [+..., +...]
-        
-        # Determine change in catalyst concentration
-        dC = uk-up
+        uk = U_k(k)      # (2x1), PHYSICAL input [M]
+
+        # change in working-solution concentration this step
+        dC  = uk - up
         dC1 = dC[0]
         dC2 = dC[1]
 
-        Vs = Vs - V_sens_norm
-        Vc1 = vol_from_deltaC_safe(dC1, Cc1, Vs, eps=1e-12)
-        Vc2 = vol_from_deltaC_safe(dC2, Cc2, Vs, eps=1e-12)
+        # volume AFTER sampling (same structure as in simulate())
+        Vs_before = Vs - V_sens
 
-        #  Total volume after addition
+        # volume added by each catalyst (physical units)
+        Vc1 = vol_from_deltaC_safe(dC1, Cc1, Vs_before, eps=eps)
+        Vc2 = vol_from_deltaC_safe(dC2, Cc2, Vs_before, eps=eps)
         Vsum = Vc1 + Vc2
 
-        # Maximum allowable change
-        dV_max_k = V_max/V_max - Vs
+        # maximum free volume available this step
+        dV_max_k = V_max - Vs_before  # [volume units]
 
-        # Volume constraint
-        g.append(Vsum/dV_max_k); lbg += [0.0]   ; ubg += [1.0]
+        # 1) total added volume constraint:  0 <= Vsum <= dV_max_k
+        #    -> normalized as 0 <= Vsum / dV_max_k <= 1
+        g.append(Vsum / dV_max_k)
+        lbg += [0.0]
+        ubg += [1.0]
 
-        dn_max1 = dV_max_k*Cc1
-        dn_max2 = dV_max_k*Cc2
-        Vs = Vs + Vsum
+        # 2) per-catalyst "feasible ΔC" constraints (optional)
+        # maximum moles you could still add without exceeding V_max
+        dn_max1 = dV_max_k * Cc1   # [moles]
+        dn_max2 = dV_max_k * Cc2
 
-        dU_max1 = dn_max1/Vs
-        dU_max2 = dn_max2/Vs
-        g.append(dC1/dU_max1); lbg += [0.0]   ; ubg += [1.0]
-        g.append(dC2/dU_max2); lbg += [0.0]   ; ubg += [1.0]
+        # update volume AFTER dosing
+        Vs_after = Vs_before + Vsum
 
+        # corresponding maximum ΔC in working solution
+        dU_max1 = dn_max1 / Vs_after
+        dU_max2 = dn_max2 / Vs_after
 
+        # avoid division by zero (if Vs_after very tiny)
+        # you can add a safety clamp if needed:
+        # dU_max1 = ca.fmax(dU_max1, eps)
+        # dU_max2 = ca.fmax(dU_max2, eps)
+
+        g.append(dC1 / dU_max1)
+        lbg += [0.0]
+        ubg += [1.0]
+
+        g.append(dC2 / dU_max2)
+        lbg += [0.0]
+        ubg += [1.0]
+
+        # update state for next step
+        Vs = Vs_after
         up = uk
 
     G = ca.vertcat(*g)# vertically concatenate all CasADi expressions in the list g

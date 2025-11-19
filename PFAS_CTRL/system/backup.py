@@ -10,10 +10,9 @@
 # PFAS_CTRL/system/pfas_controller.py
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Dict, Optional, Any
+from typing import Dict, Optional
 import serial
 import time 
-
 
 from PFAS_CTRL.drivers.pump_wx10 import WX10Pump
 from PFAS_CTRL.drivers.gpio_control import GPIOCtrl
@@ -76,7 +75,7 @@ class FluorideBusConfig:
     device_id: int = 1
 
 
-
+# ---- minimal hub ----
 class PFASController:
     """
     Minimal aggregator:
@@ -86,7 +85,6 @@ class PFASController:
       - self.flow         : SLF3C flow helper
       - self.ph           : PHAnalyzer (call .open()/.close() yourself)
       - self.fluoride     : FluorideAnalyzer (call .open()/.close() yourself)
-      - self.logger       : optional TimelineLogger-like object
     """
 
     def __init__(
@@ -95,13 +93,9 @@ class PFASController:
         ph_cfg: Optional[PHBusConfig] = None,
         fluoride_cfg: Optional[FluorideBusConfig] = None,
         *,
-        logger: Any | None = None,           # <--- accept logger
         gpio_active_low: bool = False,
         gpio_chip: str = "/dev/gpiochip4",
     ):
-        # store logger
-        self.logger = logger
-
         # Pump bus (opens immediately; WX10Pump uses provided Serial)
         self.pump_cfg = pump_cfg
         self.pump_ser = serial.Serial(
@@ -109,21 +103,14 @@ class PFASController:
             bytesize=8, parity=serial.PARITY_EVEN, stopbits=1,
             timeout=pump_cfg.timeout,
         )
-        # keep original WX10Pump signature if that’s what you had before
-        self.pump = WX10Pump(self.pump_ser)
-
-        # logical names -> RS485 addresses etc.
+        self.pump = WX10Pump(port=self.pump_ser, address=1)
         self.pump_addrs = dict(pump_cfg.addrs)
-        self.pump_num_rollers = dict(pump_cfg.pump_num_rollers)
+        self.pump_num_rollers = dict(pump_cfg.pump_num_rollers) 
         self.reactor_volume_ml = 6.3989  # measured reactor volume
-        self.reactor_tube_volume = 3.8   # measured tube volume
+        self.reactor_tube_volume = 3.8  # measured tube volume
 
-        # GPIO + Flow (pass logger into GPIO if it supports it)
-        self.gpio = GPIOCtrl(
-            active_low=gpio_active_low,
-            chip_path=gpio_chip,
-            logger=self.logger,        # <--- now self.logger exists
-        )
+        # GPIO + Flow
+        self.gpio = GPIOCtrl(active_low=gpio_active_low, chip_path=gpio_chip)
         self.gpio.open()
         self.flow = SLF3C()
 
@@ -157,35 +144,13 @@ class PFASController:
                 device_id=fluoride_cfg.device_id,
             )
 
-    # --- logging helpers -------------------------------------------------
-
-    def _log_pump_run(self, pump_name: str, addr: int,
-                      speed_pct: float, volume_ml: float | None):
-        """Log the start of a pump run."""
-        if self.logger is None:
-            return
-        channel = f"pump_{addr}"  # 1..7 (directly from address table)
-        self.logger.log(channel, speed_pct, volume_ml=volume_ml)
-
-    def _log_pump_stop(self, addr: int):
-        """Log the end of a pump run (set value to 0)."""
-        if self.logger is None:
-            return
-        channel = f"pump_{addr}"
-        self.logger.log(channel, 0.0)
-
+    # Optional: tiny helper to close the pump serial
     def close(self):
-        """Optional helper to close serial + GPIO."""
         try:
             if self.pump_ser and self.pump_ser.is_open:
                 self.pump_ser.close()
         except Exception:
             pass
-        try:
-            self.gpio.close()
-        except Exception:
-            pass
-
     
     # --- helpers ---
     def flow_rate_for_pump(self, pump_name: str, speed: float) -> float:
@@ -218,8 +183,7 @@ class PFASController:
 
         
     # Helper function for dosing a specific volume with a specific pump
-    def _dose(self, pump_name: str, volume_ml: float,
-              speed: float = 50.0, cw: bool = True) -> float:
+    def _dose(self, pump_name: str, volume_ml: float, speed: float = 50.0, cw: bool = True) -> float:
         """Run one pump long enough to deliver volume_ml (mL). Returns run time in seconds."""
         if pump_name not in self.pump_addrs:
             raise ValueError(f"Unknown pump {pump_name!r}")
@@ -228,19 +192,11 @@ class PFASController:
             raise ValueError(f"Estimated flow for {pump_name} at {speed}% is <= 0")
         run_s = (volume_ml / flow_ml_min) * 60.0
         addr = self.pump_addrs[pump_name]
-
-        # --- LOG START ---
-        self._log_pump_run(pump_name, addr, speed_pct=float(speed),
-                           volume_ml=float(volume_ml))
-        # --- RUN PUMP ---
         self.pump.set_speed(speed, run=True, cw=cw, address=addr)
         time.sleep(run_s)
         self.pump.stop(address=addr)
-        # --- LOG STOP ---
-        self._log_pump_stop(addr)
-
         return run_s
-
+    
     # Invert the flow model to get speed for a desired flow rate
     def speed_for_flow(self, pump_name: str, flow_ml_min: float) -> float:
         """
@@ -733,18 +689,6 @@ class PFASController:
         # update batch volume
         V_new_ml = Vs_ml + Vc_so3_ml + Vc_cl_ml
 
-        # --- LOG catalyst doses (if logger available) ---
-        if self.logger is not None:
-            if Vc_so3_ml > 0:
-                self._log_pump_run("c1", addr_so3, speed_pct=float(speed_pct),
-                                   volume_ml=float(Vc_so3_ml))
-                self._log_pump_stop(addr_so3)
-            if Vc_cl_ml > 0:
-                self._log_pump_run("c2", addr_cl, speed_pct=float(speed_pct),
-                                   volume_ml=float(Vc_cl_ml))
-                self._log_pump_stop(addr_cl)
-
-
         return {
             "delta_u_M": {"so3": dC_so3, "cl": dC_cl},
             "dose_ml": {"so3": Vc_so3_ml, "cl": Vc_cl_ml, "total": Vc_so3_ml + Vc_cl_ml},
@@ -756,8 +700,6 @@ class PFASController:
             "Vs_ml_before": float(Vs_ml),
             "Vs_ml_after":  float(V_new_ml),
             "pumps": {"so3": pump_so3, "cl": pump_cl},
-            "Vs_ml_after": float(V_new_ml),
-
         }
 
 

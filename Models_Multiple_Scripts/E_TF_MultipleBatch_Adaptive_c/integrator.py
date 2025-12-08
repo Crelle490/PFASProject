@@ -29,8 +29,8 @@ class RungeKuttaIntegratorCell(Layer):
 
         self.constants = constants.copy() if isinstance(constants, dict) else constants
 
-        self.I0_185 = self.constants["I0_185"].copy()
-        self.I0_254 = self.constants["I0_254"].copy()
+        self.I0_185 = self.constants["I0_185"]
+        self.I0_254 = self.constants["I0_254"]
         
         # Override constants with provided kwargs if they match
         if I0_185 is not None:

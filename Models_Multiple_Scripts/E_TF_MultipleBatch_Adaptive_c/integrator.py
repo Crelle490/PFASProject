@@ -6,17 +6,38 @@ from tensorflow.keras.layers import Layer
 class RungeKuttaIntegratorCell(Layer):
     def __init__(self, k1, k2, k3, k4, k5, k6, k7,
                  constants, c_cl, c_so3, pH, dt, dummy_initial_state,
-                 for_prediction=False, **kwargs):
+                 for_prediction=False, I0_185=None, I0_254=None, **kwargs):
         """
         RK4 integrator cell with adaptive hydrated electron generation.
-        dummy_initial_state: (1, 8) array used only to build the cell.
+        
+        Args:
+            k1-k7: Initial kinetic rate constants
+            constants: Dictionary of physical constants
+            c_cl: Chloride concentration
+            c_so3: Sulfite concentration
+            pH: pH value
+            dt: Time step
+            dummy_initial_state: (1, 8) array used only to build the cell
+            for_prediction: Whether in prediction mode
+            I0_185: Optional UV intensity at 185 nm to override constants
+            I0_254: Optional UV intensity at 254 nm to override constants
         """
         super().__init__(**kwargs)
         self.dt = float(dt)
         self.initial_state = np.asarray(dummy_initial_state, dtype=np.float32)
         self.state_size = 8
 
-        self.constants = constants
+        self.constants = constants.copy() if isinstance(constants, dict) else constants
+
+        self.I0_185 = self.constants["I0_185"].copy()
+        self.I0_254 = self.constants["I0_254"].copy()
+        
+        # Override constants with provided kwargs if they match
+        if I0_185 is not None:
+            self.I0_185 = I0_185
+        if I0_254 is not None:
+            self.I0_254 = I0_254
+        
         self.c_cl = float(c_cl)
         self.c_so3 = float(c_so3)
         self.pH = float(pH)
@@ -43,6 +64,12 @@ class RungeKuttaIntegratorCell(Layer):
         # update catalyst based on input
         self.c_cl = float(inputs[0])
         self.c_so3 = float(inputs[1])
+
+        if len(inputs) > 2:
+            # Optionally update pH, and intensities from inputs
+            self.pH = float(inputs[2])
+            self.I0_185 = float(inputs[3])
+            self.I0_254 = float(inputs[4])
 
         # RK4 increments
         k1 = self._fun(y, params) * self.dt
@@ -126,9 +153,9 @@ class RungeKuttaIntegratorCell(Layer):
         term_oh_m_185 = f_oh_m_185 * p["phi_oh_m_185"] * (1.0 - np.power(10.0, -p["epsilon_oh_m_185"] * p["l"] * c_oh_m))
         term_cl_185   = f_cl_185   * p["phi_cl_185"]   * (1.0 - np.power(10.0, -p["epsilon_cl_185"]   * p["l"] * self.c_cl))
         term_so3_185  = f_so3_185  * p["phi_so3_185"]  * (1.0 - np.power(10.0, -p["epsilon_so3_185"]  * p["l"] * self.c_so3))
-        numerator_185 = p["I0_185"] * (term_h2o_185 + term_oh_m_185 + term_cl_185 + term_so3_185)
+        numerator_185 = self.I0_185 * (term_h2o_185 + term_oh_m_185 + term_cl_185 + term_so3_185)
 
         # Contribution @254
-        numerator_254 = p["I0_254"] * f_so3_254 * p["phi_so3_254"] * (1.0 - np.power(10.0, -p["epsilon_so3_254"] * p["l"] * self.c_so3))
+        numerator_254 = self.I0_254 * f_so3_254 * p["phi_so3_254"] * (1.0 - np.power(10.0, -p["epsilon_so3_254"] * p["l"] * self.c_so3))
 
         return float(numerator_185 + numerator_254)

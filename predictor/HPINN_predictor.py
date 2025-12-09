@@ -10,10 +10,7 @@ import os
 
 # Import custom modules for PINN
 from .HPINN_Fused_model import RungeKuttaIntegratorCell, PINNModel, interpolate_predictions 
-
-# Import custom modules for EKF
 from predictor.EKF import ExtendedKalmanFilter
-#from predictor.kinetic_model import f, h
 
 REACTION_RATE_SO3_EAQ = 1.5e6
 REACTION_RATE_CL_EQA = 1e6

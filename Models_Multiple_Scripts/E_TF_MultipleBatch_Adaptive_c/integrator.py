@@ -97,6 +97,7 @@ class RungeKuttaIntegratorCell(Layer):
         """
         p = self.constants
         c_pfas_init = float(self.initial_state[0, 0])
+        
         # [OH-] from pH
         c_oh_m = np.power(10.0, -14.0 + self.pH)
 

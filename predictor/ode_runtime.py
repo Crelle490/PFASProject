@@ -25,7 +25,6 @@ def load_trained_k(path):
     return np.array([d[k] for k in keys], dtype=np.float32)
 
 def load_constants(cfg_dir):
-    # uses your exact filename with the typo: physichal_paramters.yaml
     return yaml.safe_load(open(Path(cfg_dir) / "physichal_paramters.yaml", "r"))
 
 def load_initials(cfg_dir):
@@ -42,10 +41,9 @@ def build_model_from_config(cfg_dir, trained_k_yaml, t_sim, dt=1.0):
     pH, c_cl, c_so3, c_pfas_init = load_initials(cfg_dir)
     k = load_trained_k(trained_k_yaml)
 
-    # shapes expected by your create_model
     t_sim = np.asarray(t_sim, dtype=np.float32)
     t_pinn_list = [t_sim]
-    t_true_list = [t_sim[:1]]              # dummy (not training)
+    t_true_list = [t_sim[:1]]              
     initial_states = np.zeros((1, 8), np.float32)
     initial_states[0, 0] = np.float32(c_pfas_init)
     dummy = np.zeros((1, t_sim.size, 1), np.float32)

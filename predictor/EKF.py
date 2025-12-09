@@ -146,7 +146,7 @@ class ExtendedKalmanFilter:
         S  = self.Hs @ self.Ps @ self.Hs.T + self.Rs
         S += self.eps * np.eye(self.m)
 
-        # Optional chi-square gating (skip update on outlier)
+        # chi-square gating (skip update on outlier)
         if self.gate_chi2:
             nis = float(nu.T @ np.linalg.inv(S) @ nu)
             if nis > self._chi2_thr:

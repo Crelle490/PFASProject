@@ -6,18 +6,19 @@ Old but maybe gold/
 # Python caches and virtual environments
 __pycache__/
 *.py[cod]
-venv/
 
 # Generated or intermediate outputs
 checkpoints/
 results/
-plots_device_activity*
+plots_device_activity.py
 
 # Optional or alternative scripts
 backup.py
 simulated_predictor.py
+__init__.py
 
 # Miscellaneous entries requested
-logger/
-logger_test_systtem*
-data.py
+tests/logger.py
+tests/logger_test_system.py
+tests/data.py
+

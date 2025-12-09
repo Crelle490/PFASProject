@@ -384,73 +384,9 @@ def simulate(with_catalyst, steps, Vi, ctx, weight_label="default", enable_live_
     )
 
 
-def run_weight_sweep(weight_configs, steps, Vi):
-    """
-    Run a set of MPC simulations for different qx/qf pairs.
-    weight_configs: list of {"qx": float, "qf": float, "label": str}
-    """
-    results = []
-    for cfg in weight_configs:
-        overrides = {k: cfg[k] for k in ("qx", "qf") if k in cfg}
-        label = cfg.get("label") or f"qx={overrides.get('qx')}, qf={overrides.get('qf')}"
-        ctx = build_ctx_for_weights(overrides)
-        sim_out = simulate(
-            with_catalyst=True,
-            steps=steps,
-            Vi=Vi,
-            ctx=ctx,
-            weight_label=label,
-            enable_live_plot=False,
-        )
-
-        results.append(
-            {
-                "label": label,
-                "qx": overrides.get("qx", DEFAULT_WEIGHTS["qx"]),
-                "qf": overrides.get("qf", DEFAULT_WEIGHTS["qf"]),
-                "t_plot": sim_out[4],
-                "X_plot": sim_out[3],
-                "cost_trace": sim_out[-1],
-            }
-        )
-    return results
-
-
-def plot_weight_sweep(results, Ts):
-    """Superimposed plots for ΣPFAS and MPC cost across weight choices."""
-    if not results:
-        return
-
-    fig_state, ax_state = plt.subplots(figsize=(10, 5))
-    for res in results:
-        total_pfas = np.sum(res["X_plot"][:, :7], axis=1)
-        label = f"{res['label']} (qx={res['qx']}, qf={res['qf']})"
-        ax_state.plot(res["t_plot"], total_pfas, label=label, linewidth=2.0)
-
-    ax_state.set_xlabel("Time [s]", fontsize=13, fontweight="bold")
-    ax_state.set_ylabel(r"$\Sigma$ PFAS [M]", fontsize=13, fontweight="bold")
-    ax_state.set_title("State evolution vs. qx/qf", fontsize=14, fontweight="bold")
-    ax_state.grid(True)
-    ax_state.legend(fontsize=11)
-    plt.tight_layout()
-
-    fig_cost, ax_cost = plt.subplots(figsize=(10, 4))
-    for res in results:
-        steps_axis = np.arange(len(res["cost_trace"])) * Ts
-        label = f"{res['label']} (qx={res['qx']}, qf={res['qf']})"
-        ax_cost.plot(steps_axis, res["cost_trace"], label=label, linewidth=2.0)
-
-    ax_cost.set_xlabel("Time [s]", fontsize=13, fontweight="bold")
-    ax_cost.set_ylabel("Cost J*", fontsize=13, fontweight="bold")
-    ax_cost.set_title("MPC objective vs. qx/qf", fontsize=14, fontweight="bold")
-    ax_cost.grid(True)
-    ax_cost.legend(fontsize=11)
-    plt.tight_layout()
-
-
 
 if __name__ == "__main__":
-    #  Run both simulations 
+    #  Run both simulations
     steps = 20
     X_no_live, U_no, t_no_live, X_no_plot, t_no_plot, reset_no, cont_no, gamma_no, t_gamma_no, cost_no = simulate(
         with_catalyst=False, steps=steps, Vi=Vi, ctx=ctx_adi, weight_label="no_mpc"
@@ -458,25 +394,6 @@ if __name__ == "__main__":
     X_yes_live, U_yes, t_yes_live, X_yes_plot, t_yes_plot, reset_yes, cont_yes, gamma_yes, t_gamma_yes, cost_yes = simulate(
         with_catalyst=True,  steps=steps, Vi=Vi, ctx=ctx_adi, weight_label="default"
     )
-
-    # Configure additional qx/qf sweeps (customize as needed)
-    weight_sweep_configs = [
-        {"label": "qx_low", "qx": 0.6 * ctx_adi["weights_cfg"]["qx"], "qf": ctx_adi["weights_cfg"]["qf"]},
-        {"label": "qf_high", "qx": ctx_adi["weights_cfg"]["qx"], "qf": 1.5 * ctx_adi["weights_cfg"]["qf"]},
-    ]
-
-    # Seed sweep results with the default run so plots include the baseline without re-simulating
-    weight_sweep_results = [
-        {
-            "label": "default",
-            "qx": ctx_adi["weights_cfg"]["qx"],
-            "qf": ctx_adi["weights_cfg"]["qf"],
-            "t_plot": t_yes_plot,
-            "X_plot": X_yes_plot,
-            "cost_trace": cost_yes,
-        }
-    ]
-    weight_sweep_results.extend(run_weight_sweep(weight_sweep_configs, steps=steps, Vi=Vi))
     # --- 4. PLOTTING RESULTS ----
 
     import matplotlib.pyplot as plt
@@ -700,11 +617,6 @@ if __name__ == "__main__":
         ax4.grid(True)
 
         plt.tight_layout()
-
-    # ============================================================
-    # 4) Weight sweep overlays (ΣPFAS + MPC cost)
-    # ============================================================
-    plot_weight_sweep(weight_sweep_results, Ts)
 
     # Finally, show everything
     plt.show()

@@ -320,7 +320,6 @@ def mpc_adi(xk_flat: np.ndarray,
 
     # solve
     sol = solver(x0=U_init, p=p_vec, lbx=lbx, ubx=ubx, lbg=lbg, ubg=ubg)
-    #sol = solver(x0=U_init, p=p_vec, lbg=lbg, ubg=ubg)
     U_star_vec = np.array(sol["x"]).ravel()
     J_star = float(sol["f"])
     U_star = unpack_u(U_star_vec)

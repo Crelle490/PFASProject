@@ -14,10 +14,6 @@ import casadi as ca
 from live_plotter import LiveMPCPlot, predict_horizon_old
 
 # ---- 1. PARAMETERS AND INITIAL CONDITIONS ----
-
-
-
-
 # import system 
 try:
     from E_TF_MultipleBatch_Adaptive_c.integrator import RungeKuttaIntegratorCell
@@ -65,7 +61,6 @@ k1, k2, k3, k4, k5, k6, k7 = [k_values[f'k{i}'] for i in range(1, 8)]
 initial_state = np.array([init_vals["c_pfas_init"], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]) 
 initial_state = initial_state.reshape((1,1,8)).astype(np.float32) 
 
-#cov_params = load_yaml_covariance(cfg_dir)
 
 # Catalyst concentrations
 c_cl = params['c_cl']  # M
@@ -80,7 +75,7 @@ u_max   = [so3_max, cl_max]
 # Determine sampling time (loop time) Ts
 e_max = estimate_e(params, c_so3=so3_max, c_cl=cl_max, pH=pH, c_pfas_init=init_vals["c_pfas_init"], k1=k1)
 k_max = max([k1, k2, k3, k4, k5, k6, k7])
-Ts = 92.5#int(1.0 / (k_max * e_max))  # expand later to use func
+Ts = 92.5
 print(f"Chosen sampling time Ts: {Ts} seconds")
 
 # number of batches
@@ -104,9 +99,6 @@ rk_cell = RungeKuttaIntegratorCell(
         initial_state.reshape(1,8), for_prediction=False
     )
 rk_cell.build(input_shape=initial_state.shape)
-
-# EKF 
-
 
 # Build CasADi MPC context once (outside simulate loop)
 substeps = round(Ts / dt_sim)
@@ -142,27 +134,24 @@ def build_ctx_for_weights(weight_overrides=None, horizon=3):
 ctx_adi = build_ctx_for_weights()
 
 
-
-# ---- 2. MPC CONTROLLER ----
-
-# ---- 3. SIMULATE WHOLE PROCESS ----
+# ---- 2. SIMULATE WHOLE PROCESS ----
 
 def simulate(with_catalyst, steps, Vi, ctx, weight_label="default", enable_live_plot=True):
     substeps = int(round(Ts / dt_sim))
 
-    # --- LIVE history (for LiveMPCPlot) ---
+    #  LIVE history (for LiveMPCPlot) 
     x0_flat = initial_state.reshape(-1)
     all_states_live = [x0_flat]      # one point per Ts, after integration
     all_times_live  = [0.0]
     cost_trace = []
 
-    # --- HYBRID history (for pretty offline plotting) ---
+    #  HYBRID history (for pretty offline plotting) --
     all_states_plot = [x0_flat]      # will include reset + integrated states
     all_times_plot  = [0.0]
     reset_idx = []                   # indices in all_states_plot
     cont_end_idx = []                # indices in all_states_plot
 
-    # NEW: dilution factor history (only nontrivial when with_catalyst=True)
+    # Dilution factor history (only nontrivial when with_catalyst=True)
     gamma_hist = []                  # list of gamma values
     gamma_time = []                  # time stamps where gamma is applied
 
@@ -174,7 +163,7 @@ def simulate(with_catalyst, steps, Vi, ctx, weight_label="default", enable_live_
     # Initialize EKF c_eaq based on initial inputs
     e_init = estimate_e(params, c_so3=uk_prev[0], c_cl=uk_prev[1], pH=pH, c_pfas_init=init_vals["c_pfas_init"], k1=k1)
    
-    # --- Build well-scaled EKF covariances ---
+    #  Build well-scaled EKF covariances 
     Q, R, P0 = make_covariances_for_fluoride_only(
         x_scale=x_scale,      # from make_normalizers_from_numpy()
         meas_std=2e-14,        # matches your simulated fluoride noise std
@@ -267,7 +256,7 @@ def simulate(with_catalyst, steps, Vi, ctx, weight_label="default", enable_live_
                 cost_trace.append(float(Jstar))
 
 
-                # --- compute dilution like in CasADi and APPLY it to the state ---
+                #  compute dilution like in CasADi and APPLY it to the state 
                 deltaC = uk - uk_prev
 
                 # volume *before* dosing but after sampling, same as in CasADi: Vs = Vs - V_sens
@@ -284,14 +273,14 @@ def simulate(with_catalyst, steps, Vi, ctx, weight_label="default", enable_live_
                 Vi = float(Vs_before + Vsum)      # new volume after dosing
                 print("New volume:", Vi)
 
-                # ----- APPLY dilution to the concentration state -----
+                #  APPLY dilution to the concentration state 
                 current_state = gamma * current_state   # apply reset map
 
-                # --- store dilution factor and its time (at t_k) ---
+                #store dilution factor and its time (at t_k) 
                 gamma_hist.append(gamma)
                 gamma_time.append(t_k)
 
-                # --- HYBRID history: log reset at time t_k ---
+                #  HYBRID history: log reset at time t_k 
                 all_states_plot.append(current_state.copy())
                 all_times_plot.append(t_k)
                 reset_idx.append(len(all_states_plot) - 1)
@@ -306,10 +295,7 @@ def simulate(with_catalyst, steps, Vi, ctx, weight_label="default", enable_live_
             all_inputs.append(uk.copy())
             uk_prev = uk
 
-              # --- advance plant by one control interval Ts (multiple Δt) ---
-            # Use advance_one_control_step with n_substeps=1 repeatedly to
-            # perform RK4 steps of size dt_sim and store ALL intermediate states.
-
+            # --- advance plant by one control interval Ts (multiple Δt) ---
             segment_states = [current_state.copy()]   # list of np arrays, each length 8
             segment_times  = [t_k]                    # corresponding times
 
@@ -322,6 +308,7 @@ def simulate(with_catalyst, steps, Vi, ctx, weight_label="default", enable_live_
                     uk,
                     1  # one substep = dt_sim
                 )
+
                 # y_tf is a tf.Tensor; convert to flat numpy vector
                 y_np = np.reshape(y_tf[0].numpy(), (-1,))
                 segment_states.append(y_np.copy())
@@ -337,11 +324,7 @@ def simulate(with_catalyst, steps, Vi, ctx, weight_label="default", enable_live_
             all_states_live.append(xk_flat)
             all_times_live.append(t_next)
 
-            # --- HYBRID history: full RK4 trajectory for pretty plotting ---
-            # For the with_catalyst case we already appended the reset state
-            # (current_state at time t_k) to all_states_plot/all_times_plot.
-            # Now append ONLY the intermediate RK4 states for this interval.
-            # segment_states[0] == current_state, so skip index 0.
+            #  HYBRID history: full RK4 trajectory for pretty plotting 
             for s_state, s_time in zip(segment_states[1:], segment_times[1:]):
                 all_states_plot.append(s_state.copy())
                 all_times_plot.append(s_time)
@@ -362,7 +345,6 @@ def simulate(with_catalyst, steps, Vi, ctx, weight_label="default", enable_live_
             print(f"R update → {R_ff:.3e}  |  Q_ff/R = {Q_ff/R_ff:.3f}")
 
             # Set correct c_eaq based on applied uk
-            #ekf.set_c_eaq(estimate_e(params, c_so3=uk[0], c_cl=uk[1], pH=pH,c_pfas_init=init_vals["c_pfas_init"], k1=k1))
             ekf.set_c_eaq(estimate_e(params, c_so3=uk[0], c_cl=uk[1], pH=pH,c_pfas_init=current_state[0], k1=k1))
             
             # Insert simulated state into EKF predict step
@@ -372,9 +354,8 @@ def simulate(with_catalyst, steps, Vi, ctx, weight_label="default", enable_live_
             noise = np.random.normal(0, 0)
             simulated_flouride = xk_state_simulated[7] + noise  # fluoride measurement with noise
             measured_F.append(simulated_flouride)
-            #xk_state = ekf.update(np.maximum(simulated_flouride, 0.0))  # fluoride measurement
-            xk_state = xk_state_simulated
-            #xk_state = xk_state.reshape((1,1,8)).astype(np.float32)
+            xk_state = ekf.update(np.maximum(simulated_flouride, 0.0))  # fluoride measurement
+
 
             if step % 2 == 0:  # every other step to keep output short
                 _, P_phys = ekf.get_state()

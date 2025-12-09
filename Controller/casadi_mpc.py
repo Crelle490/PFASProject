@@ -276,12 +276,6 @@ def terminal_cost_sym_lex(xN, qf: float, z_scale, taus, sharp, qf_sum,c_pfas_ini
 
     return L_focus_N
 
-
-def _vol_from_deltaC(uk: ca.MX,up: ca.MX, Cx: ca.MX, Vs: ca.MX, eps: float = 1e-12) -> ca.MX:
-
-    dV = Vs*(up - uk)/(uk-Cx)
-    return dV
-
 def smooth_pos(x, eps=1e-12):
     # C¹ approx to max(x,0)
     return 0.5*(x + ca.sqrt(x*x + eps))
@@ -417,11 +411,6 @@ def build_single_shoot_nlp(Phi: ca.Function,
         # corresponding maximum ΔC in working solution
         dU_max1 = dn_max1 / Vs_after
         dU_max2 = dn_max2 / Vs_after
-
-        # avoid division by zero (if Vs_after very tiny)
-        # you can add a safety clamp if needed:
-        # dU_max1 = ca.fmax(dU_max1, eps)
-        # dU_max2 = ca.fmax(dU_max2, eps)
 
         g.append(dC1 / dU_max1)
         lbg += [0.0]

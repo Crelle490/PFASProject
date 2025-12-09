@@ -10,8 +10,9 @@ import matplotlib.pyplot as plt
 
 # Import simulation helpers (no heavy sim runs thanks to main-guard in simulate_system)
 from simulate_system import (
-    run_weight_sweep,
+    simulate,
     build_ctx_for_weights,
+    DEFAULT_WEIGHTS,
     Ts,
     Vi,
 )
@@ -43,6 +44,38 @@ def default_weight_grid():
             }
         )
     return grid
+
+
+def run_weight_sweep(weight_configs, steps, Vi):
+    """
+    Run a set of MPC simulations for different qx/qf pairs.
+    weight_configs: list of {"qx": float, "qf": float, "label": str}
+    """
+    results = []
+    for cfg in weight_configs:
+        overrides = {k: cfg[k] for k in ("qx", "qf") if k in cfg}
+        label = cfg.get("label") or f"qx={overrides.get('qx')}, qf={overrides.get('qf')}"
+        ctx = build_ctx_for_weights(overrides)
+        sim_out = simulate(
+            with_catalyst=True,
+            steps=steps,
+            Vi=Vi,
+            ctx=ctx,
+            weight_label=label,
+            enable_live_plot=False,
+        )
+
+        results.append(
+            {
+                "label": label,
+                "qx": overrides.get("qx", DEFAULT_WEIGHTS["qx"]),
+                "qf": overrides.get("qf", DEFAULT_WEIGHTS["qf"]),
+                "t_plot": sim_out[4],
+                "X_plot": sim_out[3],
+                "cost_trace": sim_out[-1],
+            }
+        )
+    return results
 
 
 def plot_runs_side_by_side(runs, Ts, save_path=None):

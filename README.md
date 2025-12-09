@@ -1,6 +1,6 @@
 # PFASProject
 <p align="center">
-  <img src="media/control_unit.png" width="450" height="auto">
+  <img src="media/control_unit.png" width="350" height="auto">
 </p>
 
 Comprehensive controls, modeling, and simulation code for per- and polyfluoroalkyl substances (PFAS) photochemical degradation. The repository combines a physics-informed neural network (PINN) predictor, an extended Kalman filter (EKF), and a model predictive control (MPC) stack plus hardware drivers for pumps and sensors.

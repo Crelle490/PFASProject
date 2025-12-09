@@ -157,7 +157,7 @@ class PFASController:
                 device_id=fluoride_cfg.device_id,
             )
 
-    # --- logging helpers -------------------------------------------------
+    # --- logging helpers 
 
     def _log_pump_run(self, pump_name: str, addr: int,
                       speed_pct: float, volume_ml: float | None):

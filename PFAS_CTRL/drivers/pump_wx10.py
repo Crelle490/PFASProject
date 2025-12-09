@@ -21,7 +21,6 @@ class WX10Pump:
     - Calculates/validates FCS (XOR).
     - Exposes set_speed / stop / get_state / read_id and broadcast helpers.
 
-    You can pass either a pyserial Serial object or a serial port string.
     """
     # --- Protocol constants ---
     HDR = 0xE9

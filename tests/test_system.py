@@ -115,7 +115,7 @@ xk_state = initial_state.copy()              # shape (1,1,8)
 x0_flat  = initial_state.reshape(-1)         # shape (8,)
 all_states = [x0_flat]
 all_inputs = []
-measured_F = [0.0]  # initial measurement (dummy)
+measured_F = [0.0]  
 uk_prev = np.array([0.000,0.000], dtype=float)
 x_scale, u_scale = make_normalizers_from_numpy(x0_flat, u_max)
 
@@ -127,11 +127,6 @@ Q, R, P0 = make_covariances_for_fluoride_only(
     p0_frac=0.5,          # initial uncertainty = 50% of state magnitude
     rho=0.0               # no inter-state correlation (keep 0 unless needed)
     )
-
-
-
-
-
 
 
 # --- STEP 0: Initialize controller -----

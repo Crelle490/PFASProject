@@ -6,6 +6,10 @@ Old but maybe gold/
 # Python caches and virtual environments
 __pycache__/
 *.py[cod]
+Models_Multiple_Scripts/__pycache__/
+PFAS_CTRL/__pycache__/
+predictor/__pycache__/
+
 
 # Generated or intermediate outputs
 checkpoints/
@@ -21,4 +25,8 @@ __init__.py
 tests/logger.py
 tests/logger_test_system.py
 tests/data.py
-
+Models_Multiple_Scripts/__init__.py
+PFAS_CTRL/__init__.py
+PFAS_CTRL/__main__.py
+PFAS_CTRL/cli.py
+predictor/__init__.py

@@ -12,7 +12,7 @@ import time
 
 
 
-# -------- device map you discovered --------
+#  device map you discovered 
 IR_TEMP = 0x0001  # word pair: 0x0001, 0x0002  -> °C
 IR_PH = 0x0003  # word pair: 0x0003, 0x0004  -> mg/L
 
@@ -43,7 +43,7 @@ class PHAnalyzer:
         self.big_endian_words = bool(big_endian_words)
         self._client: Optional[ModbusSerialClient] = None
 
-    # ---- lifecycle ----
+    #  lifecycle 
     def open(self) -> None:
         self._client = ModbusSerialClient(
             port=self.cfg.port,
@@ -61,7 +61,7 @@ class PHAnalyzer:
             self._client.close()
             self._client = None
 
-    # ---- public reads ----
+    #  public reads 
     def read_temperature_c(self) -> float:
         return self._read_float_ir(IR_TEMP)
 

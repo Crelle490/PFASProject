@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from helper_functions import build_mpc_adi, mpc_adi, make_normalizers_from_numpy
 import casadi as ca
 from live_plotter import LiveMPCPlot, predict_horizon_old
+from utils import estimate_e_with_intensity
 
 # ---- 1. PARAMETERS AND INITIAL CONDITIONS ----
 
@@ -67,17 +68,22 @@ initial_state = initial_state.reshape((1,1,8)).astype(np.float32)
 # Catalyst concentrations
 c_cl = params['c_cl']  # M
 c_so3 = params['c_so3']  # M
+i0_185 = params['I0_185']  # M/s
+i0_254 = params['I0_254']  # M/s
 C_c = [c_so3, c_cl]  # catalyst stock concentrations
 
 # Catalyst limits
 cl_max = c_cl*0.1
 so3_max = c_so3*0.1
-u_max   = [so3_max, cl_max]
+intensity_max = 1.0
+pH_max = 14.0
+u_max   = [so3_max, cl_max,pH_max, intensity_max] 
 
 # Determine sampling time (loop time) Ts
-e_max = estimate_e(params, c_so3=so3_max, c_cl=cl_max, pH=pH, c_pfas_init=init_vals["c_pfas_init"], k1=k1)
+e_max = estimate_e_with_intensity(params, c_so3=so3_max, c_cl=cl_max, pH=pH, c_pfas_init=init_vals["c_pfas_init"], k1=k1,I0_185=i0_185,I0_254=i0_254)
 k_max = max([k1, k2, k3, k4, k5, k6, k7])
-Ts = 92.5#int(1.0 / (k_max * e_max))  # expand later to use func
+
+Ts = 92#int(1.0 / (k_max * e_max))  # expand later to use func
 print(f"Chosen sampling time Ts: {Ts} seconds")
 
 # number of batches
@@ -98,7 +104,7 @@ V_sens = init_vals["V_sens"] # volume sampled each step
 rk_cell = RungeKuttaIntegratorCell(
         k1, k2, k3, k4, k5, k6, k7,
         params, c_cl_0, c_so3_0, pH, dt_sim,
-        initial_state.reshape(1,8), for_prediction=False
+        initial_state.reshape(1,8),I0_185=i0_185,I0_254=i0_254, for_prediction=False
     )
 rk_cell.build(input_shape=initial_state.shape)
 

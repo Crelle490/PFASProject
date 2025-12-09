@@ -5,7 +5,7 @@ from typing import Callable
 
 # ---- 0) Dimensions (match your system) ----
 NX = 8   # states
-NU = 2   # inputs: [so3, cl]
+NU = 4   # inputs: [so3, cl]
 
 # 1) --- Build symbolic dynamics --- 
 # # symbolic f(x,u) expression
@@ -19,9 +19,13 @@ def make_rhs(P: dict, k_list: np.ndarray, pH: float, c_pfas_init: float):
     # small eps to avoid division by zero in fractions
     eps = 1e-30
 
-    def estimate_e_sym(c_so3, c_cl):
+    def estimate_e_sym(c_so3, c_cl,pH,intensity):
         """Symbolic mirror of estimate_e(...), CasADi-safe ops."""
         c_oh_m = ca.power(10.0, -14.0 + pH)
+
+        # Compute intensities induvidial wavelengths
+        i0_185 = intensity * P["I0_185"]
+        i0_254 = intensity * P["I0_254"]
 
         # --- totals @185 nm ---
         Sigma_f_185 = (P["epsilon_h2o_185"] * P["c_h2o"]
@@ -47,10 +51,10 @@ def make_rhs(P: dict, k_list: np.ndarray, pH: float, c_pfas_init: float):
         term_oh_m_185 = f_oh_m_185 * P["phi_oh_m_185"] * (1 - ca.power(10.0, -P["epsilon_oh_m_185"] * P["l"] * c_oh_m))
         term_cl_185   = f_cl_185   * P["phi_cl_185"]   * (1 - ca.power(10.0, -P["epsilon_cl_185"]   * P["l"] * c_cl))
         term_so3_185  = f_so3_185  * P["phi_so3_185"]  * (1 - ca.power(10.0, -P["epsilon_so3_185"]  * P["l"] * c_so3))
-        numerator_185 = P["I0_185"] * (term_h2o_185 + term_oh_m_185 + term_cl_185 + term_so3_185)
+        numerator_185 = i0_185 * (term_h2o_185 + term_oh_m_185 + term_cl_185 + term_so3_185)
 
         # absorbed @254 (only SO3 path)
-        numerator_254 = P["I0_254"] * f_so3_254 * P["phi_so3_254"] * (1 - ca.power(10.0, -P["epsilon_so3_254"] * P["l"] * c_so3))
+        numerator_254 = i0_254 * f_so3_254 * P["phi_so3_254"] * (1 - ca.power(10.0, -P["epsilon_so3_254"] * P["l"] * c_so3))
 
         numerator = numerator_185 + numerator_254
 
@@ -85,6 +89,8 @@ def make_rhs(P: dict, k_list: np.ndarray, pH: float, c_pfas_init: float):
         # ---------- unpack inputs ----------
         c_so3 = u[0]     # SO3 concentration
         c_cl  = u[1]     # Cl- concentration
+        pH  = u[2]     # pH value
+        intensity = u[3] # normalized intensity factor
 
 
         # individual PFAS species (7)
@@ -98,7 +104,7 @@ def make_rhs(P: dict, k_list: np.ndarray, pH: float, c_pfas_init: float):
         c_f     = x[7]   # fluoride (F-)
 
         # ---------- hydrated electron concentration ----------
-        e = estimate_e_sym(c_so3, c_cl)  # symbolic scalar
+        e = estimate_e_sym(c_so3, c_cl,pH,intensity)  # symbolic scalar
 
         # ---------- explicit differential equations ----------
         # dx1/dt = -k1 * e * PFAS1
@@ -235,16 +241,15 @@ def stage_cost_sym_lex(xk, uk, uk_prev,
       - q_sum: small weight on total PFAS (e.g. 0.05)
       - c_pfas_init: initial total PFAS (for final target calculation)
     """
+    
     # Cast constants
     R_c   = ca.DM(R).reshape((NU, 1))        # (2x1)
     Rd_c  = ca.DM(Rd).reshape((NU, 1))       # (2x1)
-    #us_c  = ca.DM(u_scale).reshape((NU, 1))  # (2x1)
-    us_c = u_scale
     zsc_c = z_scale + 1e-30                  # scalar MX/SX guard
 
     # Inputs (normalized)
-    u_norm  = uk / us_c
-    du_norm = (uk - uk_prev) / us_c
+    u_norm  = uk / u_scale
+    du_norm = (uk - uk_prev) / u_scale
     u_quad  = ca.sum1(R_c  * (u_norm**2))
     du_quad = ca.sum1(Rd_c * (du_norm**2))
 
@@ -257,10 +262,11 @@ def stage_cost_sym_lex(xk, uk, uk_prev,
 
     # Penalize F- when away from final target (not used right now)
     L_focus = qx * ca.sum1(w_dyn * (x7**2))
-    F_final = c_pfas_init*2*(NX-1)
-    L_sum = 0 #q_sum * ((F_final-xk[-1]) / zsc_c[-1])**2
+    #F_final = c_pfas_init*2*(NX-1)
+    #L_sum = 0 #q_sum * ((F_final-xk[-1]) / zsc_c[-1])**2
 
-    return L_focus + L_sum + u_quad + du_quad
+    # NOTES: Fix scaling with Ph and intensity included
+    return L_focus + u_quad + du_quad #+ L_sum
 
 
 
@@ -281,16 +287,10 @@ def terminal_cost_sym_lex(xN, qf: float, z_scale, taus, sharp, qf_sum,c_pfas_ini
 
 
     # Penalize F- when terminal away from final target (not used right now)
-    F_final = c_pfas_init*2*(NX-1)
-    L_sum_N   = 0 #qf_sum * ((xN[-1]-F_final)/ zsc_c[-1])**2
+    #F_final = c_pfas_init*2*(NX-1)
+    #L_sum_N   = 0 #qf_sum * ((xN[-1]-F_final)/ zsc_c[-1])**2
 
-    return L_focus_N + L_sum_N
-
-
-def _vol_from_deltaC(uk: ca.MX,up: ca.MX, Cx: ca.MX, Vs: ca.MX, eps: float = 1e-12) -> ca.MX:
-
-    dV = Vs*(up - uk)/(uk-Cx)
-    return dV
+    return L_focus_N #+ L_sum_N
 
 def smooth_pos(x, eps=1e-12):
     # C¹ approx to max(x,0)
@@ -310,8 +310,6 @@ def vol_from_deltaC_safe(deltaC, Cc, Vs, eps=1e-12):
 def build_single_shoot_nlp(Phi: ca.Function,
                            N: int,
                            weights: dict,
-                           #z_scale: np.ndarray,
-                           #u_scale: np.ndarray,
                            u_max: np.ndarray,
                            du_max: np.ndarray,
                            c_pfas_init: float,

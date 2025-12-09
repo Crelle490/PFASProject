@@ -2,6 +2,8 @@ pH: 5.7
 c_pfas_init: 9.6e-7
 c_cl_0: 0.0
 c_so3_0: 0.0
+I0_185: 2.07e-6
+I0_254: 5.19e-4
 t_r: 1200  # total reaction time
 n_batches: 10
 Vi: 0.450 # initial volume

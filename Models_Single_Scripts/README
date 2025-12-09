@@ -1,8 +1,0 @@
-| Current File                                | Suggested New Name                                  | Rationale                                                                                       |
-| ------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `bath_hpinn_pfas_tf.py`                     | `HPINN_TF_MultiBatch_Fixed_c_eaq.py`                | TensorFlow, **multi-sequence/batch** version, fixed hydrated electron concentration (`c_eaq`).  |
-| `complete_degradation_model.py`             | `HPINN_TF_SingleBatch_Adaptive_c_eaq_Raw.py`        | TensorFlow, **single batch**, adaptive `c_eaq` from full physical model, raw/unrefactored code. |
-| `HPINN_complete_degradation_model.py`       | `HPINN_TF_SingleBatch_Adaptive_c_eaq_Structured.py` | Same as above but **refactored/structured** version for readability and maintainability.        |
-| `HPINN_for_PFAS_reduced_model_logarithm.py` | `HPINN_TF_SingleBatch_Fixed_c_eaq_Reduced.py`       | TensorFlow, **single batch**, fixed `c_eaq`, reduced kinetic model.                             |
-| `HPINN_Fused_model.py`                      | `HPINN_TF_MultiBatch_Adaptive_c_eaq.py`             | TensorFlow, **multi-batch** training with adaptive `c_eaq` and full physical parameters.        |
-| `hpinn_pfas_torch.py`                       | `HPINN_PyTorch_SingleBatch_Fixed_c_eaq.py`          | PyTorch, **single batch**, fixed `c_eaq`, reduced kinetic model.                                |

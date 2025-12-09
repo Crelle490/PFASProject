@@ -1,1 +1,6 @@
 .venv/
+jit*
+tmp*
+simulated_predictor.py
+plots_device_activity.py
+live_plot.png

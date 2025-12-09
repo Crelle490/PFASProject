@@ -5,8 +5,8 @@ from tensorflow.keras.layers import Layer
 
 class RungeKuttaIntegratorCell(Layer):
     def __init__(self, k1, k2, k3, k4, k5, k6, k7,
-                 constants, c_cl, c_so3, pH, dt, dummy_initial_state,
-                 for_prediction=False, I0_185=None, I0_254=None, **kwargs):
+                 constants, c_cl, c_so3, pH, intensity, dt, dummy_initial_state,
+                 for_prediction=False, **kwargs):
         """
         RK4 integrator cell with adaptive hydrated electron generation.
         
@@ -29,15 +29,11 @@ class RungeKuttaIntegratorCell(Layer):
 
         self.constants = constants.copy() if isinstance(constants, dict) else constants
 
-        self.I0_185 = self.constants["I0_185"]
-        self.I0_254 = self.constants["I0_254"]
-        
-        # Override constants with provided kwargs if they match
-        if I0_185 is not None:
-            self.I0_185 = I0_185
-        if I0_254 is not None:
-            self.I0_254 = I0_254
-        
+        self.intensity = float(intensity)
+
+        self.I0_185 = self.constants["I0_185"] * self.intensity
+        self.I0_254 = self.constants["I0_254"] * self.intensity
+
         self.c_cl = float(c_cl)
         self.c_so3 = float(c_so3)
         self.pH = float(pH)
@@ -66,10 +62,11 @@ class RungeKuttaIntegratorCell(Layer):
         self.c_so3 = float(inputs[1])
 
         if len(inputs) > 2:
-            # Optionally update pH, and intensities from inputs
+            # Optionally update pH and light intensity from inputs
             self.pH = float(inputs[2])
-            self.I0_185 = float(inputs[3])
-            self.I0_254 = float(inputs[4])
+            self.intensity = float(inputs[3])
+            self.I0_185 = self.constants["I0_185"] * self.intensity
+            self.I0_254 = self.constants["I0_254"] * self.intensity
 
         # RK4 increments
         k1 = self._fun(y, params) * self.dt

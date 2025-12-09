@@ -1,3 +1,4 @@
+import argparse
 import numpy as np
 import yaml
 import tensorflow as tf
@@ -52,12 +53,19 @@ root = find_project_root(here)
 cfg_dir = root / "config"
 
 
+# Optional CLI overrides for weights
+parser = argparse.ArgumentParser(add_help=False)
+parser.add_argument("--qx", type=float, help="Override state cost weight qx")
+parser.add_argument("--qf", type=float, help="Override terminal cost weight qf")
+cli_args, _ = parser.parse_known_args()
+
 # load parameters
 params, init_vals = load_yaml_params(cfg_dir)
-pH = float(init_vals["pH"])
+pH_0 = float(7.0)#float(init_vals["pH"])
 c_cl_0 = float(init_vals["c_cl_0"])
 c_so3_0 = float(init_vals["c_so3_0"])
-dt_sim = 1.0
+intensity_0 = 0.1
+#dt_sim = 5.0
 k_values = load_yaml_constants(cfg_dir)
 k1, k2, k3, k4, k5, k6, k7 = [k_values[f'k{i}'] for i in range(1, 8)]
 initial_state = np.array([init_vals["c_pfas_init"], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]) 
@@ -65,25 +73,26 @@ initial_state = initial_state.reshape((1,1,8)).astype(np.float32)
 
 #cov_params = load_yaml_covariance(cfg_dir)
 
-# Catalyst concentrations
+# Catalyst concentrations / actuation maxima (match NU=4 ordering)
 c_cl = params['c_cl']  # M
 c_so3 = params['c_so3']  # M
-i0_185 = params['I0_185']  # M/s
-i0_254 = params['I0_254']  # M/s
-C_c = [c_so3, c_cl]  # catalyst stock concentrations
+# For pH/intensity there is no stock "concentration", but we pass nominal values
+# so the parameter vector matches NU=4 expected by the CasADi builder.
+C_c = [c_so3, c_cl, pH_0, intensity_0]
 
 # Catalyst limits
 cl_max = c_cl*0.1
 so3_max = c_so3*0.1
 intensity_max = 1.0
-pH_max = 14.0
+pH_max = 12.0
 u_max   = [so3_max, cl_max,pH_max, intensity_max] 
 
 # Determine sampling time (loop time) Ts
-e_max = estimate_e_with_intensity(params, c_so3=so3_max, c_cl=cl_max, pH=pH, c_pfas_init=init_vals["c_pfas_init"], k1=k1,I0_185=i0_185,I0_254=i0_254)
+e_max = estimate_e_with_intensity(params, c_so3=so3_max, c_cl=cl_max, pH=pH_max, c_pfas_init=init_vals["c_pfas_init"], k1=k1,intensity=intensity_max)
 k_max = max([k1, k2, k3, k4, k5, k6, k7])
 
-Ts = 92#int(1.0 / (k_max * e_max))  # expand later to use func
+Ts = 49 #int(1.0 / (k_max * e_max))  # expand later to use func
+dt_sim = Ts/10.0
 print(f"Chosen sampling time Ts: {Ts} seconds")
 
 # number of batches
@@ -91,8 +100,16 @@ t_r = init_vals["t_r"]
 n_batches = init_vals["n_batches"]
 
 # normalizers so costs are O(1)
-x0_flat = initial_state.reshape(-1)         # shape (8,)
-weights = DEFAULT_WEIGHTS
+x0_flat = initial_state.reshape(-1)
+weights = {**DEFAULT_WEIGHTS}
+if cli_args.qx is not None:
+    weights["qx"] = float(cli_args.qx)
+if cli_args.qf is not None:
+    weights["qf"] = float(cli_args.qf)
+# compute the cost of UV, it depends on Ts thus this is nessecary.
+power_uv_lamp = 14
+price_of_electricity = 2.60 # DKK/kWh
+weights["R"][3] = power_uv_lamp * Ts * price_of_electricity /(1000*3600)   # convert to DKK per control interval
 
 # Volume parameters
 Vi = init_vals["Vi"] # initial volume
@@ -103,8 +120,8 @@ V_sens = init_vals["V_sens"] # volume sampled each step
 # integration cell
 rk_cell = RungeKuttaIntegratorCell(
         k1, k2, k3, k4, k5, k6, k7,
-        params, c_cl_0, c_so3_0, pH, dt_sim,
-        initial_state.reshape(1,8),I0_185=i0_185,I0_254=i0_254, for_prediction=False
+        params, c_cl_0, c_so3_0, pH_0, intensity_0, dt_sim,
+        initial_state.reshape(1,8), for_prediction=False
     )
 rk_cell.build(input_shape=initial_state.shape)
 
@@ -117,11 +134,10 @@ print("Substeps per control interval:", substeps)
 ctx_adi = build_mpc_adi(
     params=params,
     k_list=[k1, k2, k3, k4, k5, k6, k7],
-    pH=pH,
     c_pfas_init=init_vals["c_pfas_init"],
     dt=dt_sim,
     substeps=substeps,
-    N=3,
+    N=8,
     weights=weights,
     u_max=u_max,
     x0_flat=x0_flat,             
@@ -129,10 +145,6 @@ ctx_adi = build_mpc_adi(
     du_max=None,
     rk_cell=rk_cell,
 )
-
-
-
-# ---- 2. MPC CONTROLLER ----
 
 # ---- 3. SIMULATE WHOLE PROCESS ----
 
@@ -157,11 +169,20 @@ def simulate(with_catalyst, steps, Vi):
     all_inputs = []
     measured_F = [0.0]
 
-    uk_prev = np.array([0.000,0.000], dtype=float)
+    # Include all 4 inputs (so3, cl, pH, intensity) so the MPC/TF shapes match
+    uk_prev = np.array([0.0, 0.0, pH_0, intensity_0], dtype=float)
     x_scale, u_scale = make_normalizers_from_numpy(x0_flat, u_max)
     # Initialize EKF c_eaq based on initial inputs
-    e_init = estimate_e(params, c_so3=uk_prev[0], c_cl=uk_prev[1], pH=pH, c_pfas_init=init_vals["c_pfas_init"], k1=k1)
-   
+    e_init = estimate_e_with_intensity(
+        params,
+        c_so3=uk_prev[0],
+        c_cl=uk_prev[1],
+        pH=uk_prev[2],
+        intensity=uk_prev[3],
+        c_pfas_init=init_vals["c_pfas_init"],
+        k1=k1,
+    )
+    """
     # --- Build well-scaled EKF covariances ---
     Q, R, P0 = make_covariances_for_fluoride_only(
         x_scale=x_scale,      # from make_normalizers_from_numpy()
@@ -179,12 +200,12 @@ def simulate(with_catalyst, steps, Vi):
         x_scale=x_scale
     )
     ekf.use_adaptive_R = False
-
+    """
 
     
     t_max   = steps * Ts
     z0_init = float(np.sum(initial_state.reshape(-1)[:7]))
-    live = LiveMPCPlot(Ts=Ts, t_max=t_max, z0=z0_init, u_max=u_max, x0=x0_flat, make_state_grid=True)
+    live = LiveMPCPlot(Ts=Ts, t_max=t_max, z0=z0_init, u_max=u_max, x0=x0_flat, make_state_grid=True) if with_catalyst else None
 
 
 
@@ -255,7 +276,8 @@ def simulate(with_catalyst, steps, Vi):
 
 
                 # --- compute dilution like in CasADi and APPLY it to the state ---
-                deltaC = uk - uk_prev
+                deltau = uk - uk_prev
+                deltaC = deltau[0:2]  # change in dosed concentration
 
                 # volume *before* dosing but after sampling, same as in CasADi: Vs = Vs - V_sens
                 Vs_before = Vi - V_sens
@@ -266,6 +288,7 @@ def simulate(with_catalyst, steps, Vi):
 
                 # dilution factor gamma = V_before / (V_before + Vsum)
                 gamma = 1.0 - Vsum / (Vs_before + Vsum) if (Vs_before + Vsum) > 0 else 1.0
+                gamma = float(np.clip(gamma, 0.0, 1.0))
 
                 print("Change in volume:", Vsum)
                 Vi = float(Vs_before + Vsum)      # new volume after dosing
@@ -285,8 +308,8 @@ def simulate(with_catalyst, steps, Vi):
                     
             else:
                 # no catalyst case
-                Uplan = np.array([[0.0, 0.0]] * ctx_adi["N"], dtype=float)
-                uk = np.array([0.0, 0.0], dtype=float)
+                Uplan = np.array([[0.0, 0.0, 7.0, 1.0]] * ctx_adi["N"], dtype=float)
+                uk = np.array([0.0, 0.0, 7.0, 1.0], dtype=float)
             
 
             all_inputs.append(uk.copy())
@@ -310,6 +333,9 @@ def simulate(with_catalyst, steps, Vi):
                 )
                 # y_tf is a tf.Tensor; convert to flat numpy vector
                 y_np = np.reshape(y_tf[0].numpy(), (-1,))
+                y_np = np.maximum(y_np, 0.0)  # avoid negative concentrations from numerical drift
+                if not np.isfinite(y_np).all():
+                    raise RuntimeError(f"Non-finite state encountered at step {step}, substep {j}: {y_np}")
                 segment_states.append(y_np.copy())
                 segment_times.append(t_k + (j + 1) * dt_sim)
                 y_curr = y_np
@@ -335,40 +361,6 @@ def simulate(with_catalyst, steps, Vi):
             # mark end-of-segment index (last point in this interval)
             cont_end_idx.append(len(all_states_plot) - 1)
 
-            # Update R
-            R_dynamic = compute_dynamic_R_from_measurement(
-                measurement=xk_state_simulated[-1],
-                rel_accuracy=0.02,
-                min_std=2e-20,
-                units="M"
-            )
-            ekf.set_R(R_dynamic)
-            Q_ff = float(ctx_adi["Q"][-1, -1]) if "Q" in ctx_adi else float(Q[-1, -1])
-            R_ff = float(R_dynamic[0, 0])
-            print(f"R update → {R_ff:.3e}  |  Q_ff/R = {Q_ff/R_ff:.3f}")
-
-            # Set correct c_eaq based on applied uk
-            #ekf.set_c_eaq(estimate_e(params, c_so3=uk[0], c_cl=uk[1], pH=pH,c_pfas_init=init_vals["c_pfas_init"], k1=k1))
-            ekf.set_c_eaq(estimate_e(params, c_so3=uk[0], c_cl=uk[1], pH=pH,c_pfas_init=current_state[0], k1=k1))
-            
-            # Insert simulated state into EKF predict step
-            ekf.predict(xk_state_simulated)
-
-            # Return state
-            noise = np.random.normal(0, 0)
-            simulated_flouride = xk_state_simulated[7] + noise  # fluoride measurement with noise
-            measured_F.append(simulated_flouride)
-            #xk_state = ekf.update(np.maximum(simulated_flouride, 0.0))  # fluoride measurement
-            xk_state = xk_state_simulated
-            #xk_state = xk_state.reshape((1,1,8)).astype(np.float32)
-
-            if step % 2 == 0:  # every other step to keep output short
-                _, P_phys = ekf.get_state()
-                P_diag = np.sqrt(np.diag(P_phys))
-                print(f"  EKF √P diag (first 4): {P_diag[:4]}")
-                print(f"  Innovation gain norm: {np.linalg.norm(ekf.K)}")
-
-
     finally:
         if live is not None:
             plt.close(live.fig)
@@ -391,7 +383,7 @@ def simulate(with_catalyst, steps, Vi):
 
 
 #  Run both simulations 
-steps = 70
+steps = 12
 X_no_live, U_no, t_no_live, X_no_plot, t_no_plot, reset_no, cont_no, gamma_no, t_gamma_no = simulate(with_catalyst=False, steps=steps, Vi=Vi)
 X_yes_live, U_yes, t_yes_live, X_yes_plot, t_yes_plot, reset_yes, cont_yes, gamma_yes, t_gamma_yes = simulate(with_catalyst=True,  steps=steps, Vi=Vi)
 # --- 4. PLOTTING RESULTS ----
@@ -594,6 +586,56 @@ legend_u = ax_u.legend(
 for text in legend_u.get_texts():
     text.set_fontweight("bold")
 
+plt.tight_layout()
+
+# ============================================================
+# 2b) pH and intensity over time (with catalyst)
+# ============================================================
+fig_pi, ax_pi = plt.subplots(figsize=(10, 4))
+ax_pi.step(
+    t_u_yes,
+    U_yes_step[:, 2],
+    where="post",
+    label="pH",
+    color="tab:green",
+    linewidth=2.5,
+)
+ax_pi.step(
+    t_u_yes,
+    U_yes_step[:, 3],
+    where="post",
+    label="Intensity",
+    color="tab:red",
+    linestyle="--",
+    linewidth=2.5,
+)
+ax_pi.axhline(
+    u_max[2],
+    color="tab:green",
+    linestyle=":",
+    linewidth=2.0,
+    label="pH max",
+)
+ax_pi.axhline(
+    u_max[3],
+    color="tab:red",
+    linestyle=":",
+    linewidth=2.0,
+    label="Intensity max",
+)
+ax_pi.set_xlabel("Time [s]", fontsize=14, fontweight="bold")
+ax_pi.set_ylabel("pH / normalized intensity", fontsize=14, fontweight="bold")
+ax_pi.grid(True)
+legend_pi = ax_pi.legend(
+    loc="upper right",
+    fontsize=12,
+    frameon=True,
+    borderpad=0.6,
+    handlelength=3.0,
+    handletextpad=0.8,
+)
+for text in legend_pi.get_texts():
+    text.set_fontweight("bold")
 plt.tight_layout()
 
 # ============================================================

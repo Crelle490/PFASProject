@@ -9,7 +9,7 @@ NU = 4   # inputs: [so3, cl]
 
 # 1) --- Build symbolic dynamics --- 
 # # symbolic f(x,u) expression
-def make_rhs(P: dict, k_list: np.ndarray, pH: float, c_pfas_init: float):
+def make_rhs(P: dict, k_list: np.ndarray, c_pfas_init: float):
     """
     P: dict of optical/physical constants (same keys as your YAML / estimate_e)
     k_list: array-like of [k1..k7]
@@ -21,7 +21,7 @@ def make_rhs(P: dict, k_list: np.ndarray, pH: float, c_pfas_init: float):
 
     def estimate_e_sym(c_so3, c_cl,pH,intensity):
         """Symbolic mirror of estimate_e(...), CasADi-safe ops."""
-        c_oh_m = ca.power(10.0, -14.0 + pH)
+        c_oh_m = ca.power(10.0, pH-14.0)
 
         # Compute intensities induvidial wavelengths
         i0_185 = intensity * P["I0_185"]
@@ -192,8 +192,6 @@ def make_normalizers_from_numpy(x0_flat: np.ndarray, u_max: np.ndarray):
 
     u_scale = np.asarray(u_max, dtype=float)
 
-
-    print(f"Normalizers - z_scale: {z_scales}, u_scale: {u_scale}")
     return z_scales, u_scale
 
 
@@ -243,18 +241,16 @@ def stage_cost_sym_lex(xk, uk, uk_prev,
     """
     
     # Cast constants
-    R_c   = ca.DM(R).reshape((NU, 1))        # (2x1)
-    Rd_c  = ca.DM(Rd).reshape((NU, 1))       # (2x1)
+    R_c   = ca.DM(R).reshape((NU, 1))        # (4x1)
     zsc_c = z_scale + 1e-30                  # scalar MX/SX guard
 
     # Inputs (normalized)
     u_norm  = uk / u_scale
-    du_norm = (uk - uk_prev) / u_scale
     u_quad  = ca.sum1(R_c  * (u_norm**2))
-    du_quad = ca.sum1(Rd_c * (du_norm**2))
 
-    # Dynamic lexicographic weights over PFAS_1..PFAS_7
-    #w_dyn = _priority_weights_sym(xk, taus,z_scale, sharp=sharp)   # (7x1)
+    ud_norm = (uk - uk_prev) / u_scale
+    u_dquad = ca.sum1(Rd.reshape((NU,1)) * (ud_norm**2))
+
     w_dyn = ca.DM.ones(7,1) # don't use priority weights for now
 
     # Focused PFAS penalty: sum_i w_i * (x_i/z)^2 over i=1..7
@@ -262,12 +258,8 @@ def stage_cost_sym_lex(xk, uk, uk_prev,
 
     # Penalize F- when away from final target (not used right now)
     L_focus = qx * ca.sum1(w_dyn * (x7**2))
-    #F_final = c_pfas_init*2*(NX-1)
-    #L_sum = 0 #q_sum * ((F_final-xk[-1]) / zsc_c[-1])**2
 
-    # NOTES: Fix scaling with Ph and intensity included
-    return L_focus + u_quad + du_quad #+ L_sum
-
+    return L_focus + u_quad + u_dquad
 
 
 # func to compute terminal cost
@@ -328,7 +320,6 @@ def build_single_shoot_nlp(Phi: ca.Function,
     V_sens  = ca.MX.sym('V_sens')         # sampling volume
     V_max   = ca.MX.sym('V_max')          # maximum volume
     C_c     = ca.MX.sym('C_c',NU)            # catalyst feed concentrations
-    #taus    = ca.MX.sym("taus",7)    #u_max     = ca.MX.sym('u_max',NU)            # catalyst feed concentrations
 
 
 
@@ -336,7 +327,6 @@ def build_single_shoot_nlp(Phi: ca.Function,
     qf = float(weights["qf"])
     R  = np.asarray(weights["R"],  dtype=float)
     Rd = np.asarray(weights["Rd"], dtype=float)
-    #taus = np.asarray(weights["taus"], dtype=float)
     sharp = float(weights["sharp"])
     q_sum = float(weights["q_sum"])
     qf_sum = float(weights["qf_sum"])
@@ -353,7 +343,8 @@ def build_single_shoot_nlp(Phi: ca.Function,
     Cc2 = C_c[1]
     for k in range(N):
         uk = U_k(k)
-        dC = uk - up
+        du = uk - up
+        dC  = du[0:2]  # change in dosed concentration this step
         dC1 = dC[0]
         dC2 = dC[1]
         Vc1 = vol_from_deltaC_safe(dC1, Cc1, Vs, eps=1e-12)
@@ -368,7 +359,19 @@ def build_single_shoot_nlp(Phi: ca.Function,
         Vs = Vs + Vsum # update volume after addition
 
         xk = xk*gamma # apply dilution to state
-        J += stage_cost_sym_lex(xk, uk, up, qx, R, Rd, zsc, uscale, taus, sharp, q_sum,c_pfas_init=c_pfas_init) # stage cost
+        J += stage_cost_sym_lex(xk, 
+                                uk, 
+                                up, 
+                                qx, 
+                                R, 
+                                Rd, 
+                                zsc, 
+                                uscale, 
+                                taus, 
+                                sharp, 
+                                q_sum,
+                                c_pfas_init=c_pfas_init,
+                                ) # stage cost
         xk = Phi(xk, uk)  # x_{k+1}
         up = uk
     
@@ -390,10 +393,11 @@ def build_single_shoot_nlp(Phi: ca.Function,
     Cc2 = C_c[1]         # Cl stock concentration  [M]
 
     for k in range(N):
-        uk = U_k(k)      # (2x1), PHYSICAL input [M]
+        uk = U_k(k)      # (4x1), PHYSICAL input [M]
 
         # change in working-solution concentration this step
-        dC  = uk - up
+        du  = uk - up
+        dC  = du[0:2]  # (2x1)
         dC1 = dC[0]
         dC2 = dC[1]
 
@@ -439,6 +443,16 @@ def build_single_shoot_nlp(Phi: ca.Function,
         lbg += [0.0]
         ubg += [1.0]
 
+        # Limit pH
+        g.append(du[2]/14.0)
+        lbg += [0.0]
+        ubg += [3.0]
+
+        # Limit intensity
+        g.append(du[3])
+        lbg += [0.0]
+        ubg += [0.5]
+
         # update state for next step
         Vs = Vs_after
         up = uk
@@ -448,7 +462,7 @@ def build_single_shoot_nlp(Phi: ca.Function,
     assert G.numel() == len(lbg) == len(ubg), "Constraint/bounds length mismatch"
     # after building G, before return
 
-    lbu = np.array([0.0, 0.0], dtype=float)
+    lbu = np.array([0.0, 0.0,2.0,0.0], dtype=float)
     ubu = np.asarray(u_max, float)
     # Tile across horizon
     lbx = np.tile(lbu, N)
@@ -505,6 +519,4 @@ def build_single_shoot_nlp(Phi: ca.Function,
         return [Uvec[k*NU:(k+1)*NU] for k in range(N)]
 
     return solver, pack_p, unpack_u, lbx, ubx, np.array(lbg, float), np.array(ubg, float)
-
-
 

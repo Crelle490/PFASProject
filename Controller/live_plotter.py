@@ -229,13 +229,15 @@ class LiveMPCPlot:
 
             if f_all_parts:
                 f_all = np.concatenate(f_all_parts)
-                f_min, f_max = float(np.min(f_all)), float(np.max(f_all))
-                if f_max == f_min:
-                    pad = max(abs(f_max) * 0.1, 1e-15)
-                    self.ax_states[7].set_ylim(f_max - pad, f_max + pad)
-                else:
-                    f_margin = 0.1 * (f_max - f_min)
-                    self.ax_states[7].set_ylim(f_min - f_margin, f_max + f_margin)
+                f_all = f_all[np.isfinite(f_all)]  # drop NaN/inf to avoid set_ylim errors
+                if f_all.size:
+                    f_min, f_max = float(np.min(f_all)), float(np.max(f_all))
+                    if f_max == f_min:
+                        pad = max(abs(f_max) * 0.1, 1e-15)
+                        self.ax_states[7].set_ylim(f_max - pad, f_max + pad)
+                    else:
+                        f_margin = 0.1 * (f_max - f_min)
+                        self.ax_states[7].set_ylim(f_min - f_margin, f_max + f_margin)
 
         # keep x-lims fixed
         self.axZ.set_xlim(0.0, self.t_max)

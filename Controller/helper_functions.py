@@ -8,32 +8,22 @@ from casadi_mpc import (
     build_interval_function,
     make_normalizers_from_numpy,
     build_single_shoot_nlp,
+    NU
 )
 
-
-#DEFAULT_WEIGHTS = {
-#    "qx": 5.0,
-#    "qf": 4,               # not too large, or it will still push to max
-#    "R":  np.array([0.05, 0.05]),   # <-- was ~1e-4; make using u “expensive”
-#    "Rd": np.array([0.005, 0.003]),  # smooth changes but not too restrictive
-#    "eps": 1e-10,
-#    "taus": np.array([1, 0.8, 0.5, 0.4, 0.3, 0.3, 0.2])*0.10, # thresholds for PFAS species
-#    "sharp": 0.4,  # sharpness for priority weights
-#    "q_sum": 5.0,  # weight for sum of PFAS in lex cost
-#    "qf_sum":5.5, # weight for sum of PFAS in
-#}
-
 DEFAULT_WEIGHTS = {
-    "qx": 5.0,
-    "qf": 3*2.0,               # qf = N * qx terminal focus same strength as full horizon. not too large, or it will still push to max
-    "R":  np.array([3, (3)/4.74657534247]),   # <-- was ~1e-4; make using u “expensive”
-    "Rd": np.array([0.0, 0.0]),  # maybe just delete. smooth changes but not too restrictive
+    "qx": 100.0,
+    "qf": 3*100.0,               # qf = N * qx terminal focus same strength as full horizon. not too large, or it will still push to max
+    "R":  np.array([69.3, 14.6, 0.0,0.01]),   # weights for [so3, cl, pH, intensity] given in DKK/mol, DKK/mol, DKK/unit pH, DKK/intensity
+    "Rd": np.array([0.0, 0.0,0.0045,0.0]),  # maybe just delete. smooth changes but not too restrictive
     "eps": 1e-10,
     "taus": np.array([0.50, 0.3, 0.25, 0.2, 0.1, 0.05, 0.02]), # thresholds for PFAS species
     "sharp": 0.4,  # sharpness for priority weights
     "q_sum": 0.05,  # weight for sum of PFAS in lex cost
     "qf_sum": 0.2*3*0.05, # qf_sum = 0.2 * N * q_sum. weight for sum of PFAS in
 }
+
+
 
 
 
@@ -144,7 +134,7 @@ def estimate_e(constants, c_so3, c_cl, pH, c_pfas_init, k1):
     Mirrors the algebra used inside RungeKuttaIntegratorCell.generation_of_eaq().
     Returns a scalar float [M].
     """
-    c_oh_m = 10.0 ** (-14.0 + pH)
+    c_oh_m = 10.0 ** (pH-14.0)
 
     # Total absorption @185 nm
     Sigma_f_185 = (constants["epsilon_h2o_185"] * constants["c_h2o"] +
@@ -187,7 +177,7 @@ def estimate_e(constants, c_so3, c_cl, pH, c_pfas_init, k1):
 
 # Choose Ts - not used yet
 def choose_Ts_fixed(k_list, e_max, L, T_sens,
-                    safety_rxn=10.0, safety_tr=5.0, dt_int=1.0):
+                    safety_rxn=10.0, safety_tr=5.0, dt_int=10.0):
     """
     Compute a fixed controller sampling time Ts that is safe for all expected conditions.
 
@@ -232,10 +222,10 @@ def advance_one_control_step(rk_cell, xk, uk, substeps):
     returns x_{k+1} with same shape convention as input
     """
     states = xk
-    so3, cl = float(uk[0]), float(uk[1])
+    so3, cl, pH, intensity = float(uk[0]), float(uk[1]), float(uk[2]), float(uk[3])
     #print(f"advance_one_control_step so3: {so3}, cl: {cl}")
     for _ in range(int(substeps)):
-        _, states = rk_cell.call(inputs=[so3, cl], states=states)
+        _, states = rk_cell.call(inputs=[so3, cl,pH,intensity], states=states)
     return states
 
 def vol_from_deltaC_safe(deltaC, Cc, Vs, eps=1e-12):
@@ -252,7 +242,6 @@ def vol_from_deltaC_safe(deltaC, Cc, Vs, eps=1e-12):
 # Build MPC once
 def build_mpc_adi(params: dict,
                   k_list: list | np.ndarray,
-                  pH: float,
                   c_pfas_init: float,
                   dt: float,
                   substeps: int,
@@ -266,7 +255,6 @@ def build_mpc_adi(params: dict,
                   pack_state_for_rk=None,                   # <— optional (default: identity)
                   unpack_state_from_rk=None
                   ):               # <— optional (default: identity)
-
     """
     Build the CasADi MPC once. Returns a context dict 'ctx' for mpc_adi().
     - params: your YAML 'params' dict (optical/physical constants used by estimate_e)
@@ -290,12 +278,12 @@ def build_mpc_adi(params: dict,
         du_max_arr = np.asarray(du_max, dtype=float)
 
     # Symbolic RHS and one-interval map Phi (same dt/substeps as plant)
-    rhs = make_rhs(params, k_arr, pH, c_pfas_init)
-    Phi = build_interval_function(dt=dt, substeps=int(substeps), f_rhs=rhs)
+    rhs = make_rhs(params, k_arr, c_pfas_init) # Okay
+    Phi = build_interval_function(dt=dt, substeps=int(substeps), f_rhs=rhs) # Okay
 
     # Normalizers for cost scaling
-    z_scale, u_scale = make_normalizers_from_numpy(x0_flat, u_max_arr)
-
+    z_scale, u_scale = make_normalizers_from_numpy(x0_flat, u_max_arr) # Okay
+ 
     # Build the NLP solver
     solver, pack_p, unpack_u, lbx, ubx, lbg, ubg = build_single_shoot_nlp(
         Phi=Phi,
@@ -401,8 +389,13 @@ def mpc_adi(xk_flat: np.ndarray,
     U_star = unpack_u(U_star_vec)
     u_first = np.asarray(U_star[0], dtype=float)
 
+    # Clamp all outputs to solver bounds to avoid any numerical spillover
+    lb = np.asarray(ctx["lbx"][:NU], float)  # first step bounds
+    ub = np.asarray(ctx["ubx"][:NU], float)
+    u_first = np.clip(u_first, lb, ub)
+    U_star = [np.clip(np.asarray(u, float), lb, ub) for u in U_star]
+
 
     print(f"  MPC CasADi solve complete - J*: {J_star:.4f}")
 
     return u_first, U_star, J_star
-

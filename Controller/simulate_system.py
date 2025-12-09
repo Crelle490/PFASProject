@@ -1,5 +1,3 @@
-
-
 import numpy as np
 import yaml
 import tensorflow as tf
@@ -158,6 +156,7 @@ def simulate(with_catalyst, steps, Vi):
     # Initialize EKF c_eaq based on initial inputs
     e_init = estimate_e(params, c_so3=uk_prev[0], c_cl=uk_prev[1], pH=pH, c_pfas_init=init_vals["c_pfas_init"], k1=k1)
    
+    """
     # --- Build well-scaled EKF covariances ---
     Q, R, P0 = make_covariances_for_fluoride_only(
         x_scale=x_scale,      # from make_normalizers_from_numpy()
@@ -175,8 +174,7 @@ def simulate(with_catalyst, steps, Vi):
         x_scale=x_scale
     )
     ekf.use_adaptive_R = False
-
-
+    """
     
     t_max   = steps * Ts
     z0_init = float(np.sum(initial_state.reshape(-1)[:7]))
@@ -251,7 +249,7 @@ def simulate(with_catalyst, steps, Vi):
 
 
                 # --- compute dilution like in CasADi and APPLY it to the state ---
-                deltaC = uk - uk_prev
+                deltaC = uk[0:2] - uk_prev[0:2]  # change in dosed concentration
 
                 # volume *before* dosing but after sampling, same as in CasADi: Vs = Vs - V_sens
                 Vs_before = Vi - V_sens

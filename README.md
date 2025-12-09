@@ -9,10 +9,10 @@ Comprehensive controls, modeling, and simulation code for per- and polyfluoroalk
 - `config/` – YAML configuration for controller hardware, initial conditions, kinetic parameters, and noise covariances.
 - `predictor/` – Hybrid PINN + EKF state estimator (see `HPINN_predictor.py`) with supporting Jacobian, covariance, and ODE helpers.
 - `Controller/` – MPC utilities, live plotting, and a full photodegradation simulation script (`simulate_system.py`).
-- `PFAS_CTRL/` – Command-line tools and serial drivers for pumps, pH, and fluoride sensors (`PFAS_CTRL/cli.py`).
+- `PFAS_CTRL/` – Integration of controller on hardware system including serial drivers for pumps, pH, and fluoride sensors (`PFAS_CTRL/cli.py`).
 - `Models_*` – Trained TensorFlow model code and checkpoints used by the predictor.
 - `tests/` – Hardware driver checks and controller simulations.
-- `data/` – Example/simulated datasets written by the predictor utilities.
+- `data/` – Real/simulated datasets of the PFAS degredation process.
 
 ## Prerequisites
 - Python 3.10+ recommended.

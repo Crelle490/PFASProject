@@ -1,0 +1,23 @@
+# Ignoring legacy or experimental model scripts
+Models_Single_Scripts/
+models_single_script/
+Old but maybe gold/
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+venv/
+
+# Generated or intermediate outputs
+checkpoints/
+results/
+plots_device_activity*
+
+# Optional or alternative scripts
+backup.py
+simulated_predictor.py
+
+# Miscellaneous entries requested
+logger/
+logger_test_systtem*
+data.py

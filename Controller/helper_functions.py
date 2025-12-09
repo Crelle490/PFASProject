@@ -24,15 +24,15 @@ from casadi_mpc import (
 #}
 
 DEFAULT_WEIGHTS = {
-    "qx": 5.0,
-    "qf": 3*2.0,               # qf = N * qx terminal focus same strength as full horizon. not too large, or it will still push to max
-    "R":  np.array([3, (3)/4.74657534247]),   # <-- was ~1e-4; make using u “expensive”
-    "Rd": np.array([0.0, 0.0]),  # maybe just delete. smooth changes but not too restrictive
-    "eps": 1e-10,
-    "taus": np.array([0.50, 0.3, 0.25, 0.2, 0.1, 0.05, 0.02]), # thresholds for PFAS species
-    "sharp": 0.4,  # sharpness for priority weights
-    "q_sum": 0.05,  # weight for sum of PFAS in lex cost
-    "qf_sum": 0.2*3*0.05, # qf_sum = 0.2 * N * q_sum. weight for sum of PFAS in
+    "qx": 2,
+    "qf": 12,               # qf = N * qx terminal focus same strength as full horizon. not too large, or it will still push to max
+    "R":  np.array([1, (1)/4.71232876712]),   # <-- was ~1e-4; make using u “expensive”
+    "Rd": np.array([0.0, 0.0]),  # not used 
+    "eps": 1e-10,  # not used 
+    "taus": np.array([0.50, 0.3, 0.25, 0.2, 0.1, 0.05, 0.02]), # thresholds for PFAS species # not used 
+    "sharp": 0.4,  # sharpness for priority weights # not used 
+    "q_sum": 0.05,  # weight for sum of PFAS in lex cost # not used 
+    "qf_sum": 0.2*3*0.05, # qf_sum = 0.2 * N * q_sum. weight for sum of PFAS in # not used 
 }
 
 

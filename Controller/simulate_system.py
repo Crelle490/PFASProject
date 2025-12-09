@@ -5,6 +5,7 @@ import yaml
 import tensorflow as tf
 import sys
 from pathlib import Path
+from copy import deepcopy
 from helper_functions import find_project_root, load_yaml_params, load_yaml_constants, load_yaml_covariance, estimate_e, DEFAULT_WEIGHTS, vol_from_deltaC_safe
 from helper_functions import advance_one_control_step
 import matplotlib.pyplot as plt
@@ -88,7 +89,7 @@ n_batches = init_vals["n_batches"]
 
 # normalizers so costs are O(1)
 x0_flat = initial_state.reshape(-1)         # shape (8,)
-weights = DEFAULT_WEIGHTS
+weights = deepcopy(DEFAULT_WEIGHTS)
 
 # Volume parameters
 Vi = init_vals["Vi"] # initial volume
@@ -110,21 +111,35 @@ rk_cell.build(input_shape=initial_state.shape)
 # Build CasADi MPC context once (outside simulate loop)
 substeps = round(Ts / dt_sim)
 print("Substeps per control interval:", substeps)
-ctx_adi = build_mpc_adi(
-    params=params,
-    k_list=[k1, k2, k3, k4, k5, k6, k7],
-    pH=pH,
-    c_pfas_init=init_vals["c_pfas_init"],
-    dt=dt_sim,
-    substeps=substeps,
-    N=3,
-    weights=weights,
-    u_max=u_max,
-    x0_flat=x0_flat,             
-    enable_volume_constraints=True,
-    du_max=None,
-    rk_cell=rk_cell,
-)
+def build_ctx_for_weights(weight_overrides=None, horizon=3):
+    """
+    Build an MPC context using custom qx/qf weights.
+    weight_overrides: dict with optional 'qx'/'qf' keys
+    horizon: prediction horizon N
+    """
+    weight_cfg = deepcopy(DEFAULT_WEIGHTS)
+    if weight_overrides:
+        weight_cfg.update(weight_overrides)
+
+    ctx = build_mpc_adi(
+        params=params,
+        k_list=[k1, k2, k3, k4, k5, k6, k7],
+        pH=pH,
+        c_pfas_init=init_vals["c_pfas_init"],
+        dt=dt_sim,
+        substeps=substeps,
+        N=horizon,
+        weights=weight_cfg,
+        u_max=u_max,
+        x0_flat=x0_flat,
+        enable_volume_constraints=True,
+        du_max=None,
+        rk_cell=rk_cell,
+    )
+    ctx["weights_cfg"] = weight_cfg
+    return ctx
+
+ctx_adi = build_ctx_for_weights()
 
 
 
@@ -132,13 +147,14 @@ ctx_adi = build_mpc_adi(
 
 # ---- 3. SIMULATE WHOLE PROCESS ----
 
-def simulate(with_catalyst, steps, Vi):
+def simulate(with_catalyst, steps, Vi, ctx, weight_label="default", enable_live_plot=True):
     substeps = int(round(Ts / dt_sim))
 
     # --- LIVE history (for LiveMPCPlot) ---
     x0_flat = initial_state.reshape(-1)
     all_states_live = [x0_flat]      # one point per Ts, after integration
     all_times_live  = [0.0]
+    cost_trace = []
 
     # --- HYBRID history (for pretty offline plotting) ---
     all_states_plot = [x0_flat]      # will include reset + integrated states
@@ -180,7 +196,7 @@ def simulate(with_catalyst, steps, Vi):
     
     t_max   = steps * Ts
     z0_init = float(np.sum(initial_state.reshape(-1)[:7]))
-    live = LiveMPCPlot(Ts=Ts, t_max=t_max, z0=z0_init, u_max=u_max, x0=x0_flat, make_state_grid=True)
+    live = LiveMPCPlot(Ts=Ts, t_max=t_max, z0=z0_init, u_max=u_max, x0=x0_flat, make_state_grid=True) if enable_live_plot else None
 
 
 
@@ -201,22 +217,22 @@ def simulate(with_catalyst, steps, Vi):
 
                 if step == 0: # Force first applied input to be exactly uk_prev (zero). we need measurement first
                     uk = uk_prev.copy()
-                    Uplan = uk_prev[np.newaxis, :].repeat(ctx_adi["N"], axis=0)
+                    Uplan = uk_prev[np.newaxis, :].repeat(ctx["N"], axis=0)
                     Jstar = 0.0
                 else:
                     if step >= H and all(np.sum(all_states_live[-i][:7]) < z_stop for i in range(1, H+1)):
                         uk = uk_prev
-                        Uplan = uk_prev[np.newaxis, :].repeat(ctx_adi["N"], axis=0)
+                        Uplan = uk_prev[np.newaxis, :].repeat(ctx["N"], axis=0)
                         Jstar = 0.0
                     else:
                         uk, Uplan, Jstar = mpc_adi(
-                            xk_flat=current_state, uk_prev=uk_prev, ctx=ctx_adi,
+                            xk_flat=current_state, uk_prev=uk_prev, ctx=ctx,
                             Vs0=Vi, V_sens=V_sens, V_max=Vmax, C_c=C_c, warm_start=None
                         )
                 # --- live prediction/plot BEFORE applying uk ---
                 if live is not None:
                     t_pred_rel, Z_pred, t_u_pred_rel, X_pred = predict_horizon_old(
-                        ctx_adi, rk_cell, current_state.reshape(1,1,8), Uplan, substeps, Ts
+                        ctx, rk_cell, current_state.reshape(1,1,8), Uplan, substeps, Ts
                     )
 
                     # Build safe arrays for inputs
@@ -248,6 +264,7 @@ def simulate(with_catalyst, steps, Vi):
                         X_pred=X_pred,
                     )
 
+                cost_trace.append(float(Jstar))
 
 
                 # --- compute dilution like in CasADi and APPLY it to the state ---
@@ -281,8 +298,9 @@ def simulate(with_catalyst, steps, Vi):
                     
             else:
                 # no catalyst case
-                Uplan = np.array([[0.0, 0.0]] * ctx_adi["N"], dtype=float)
+                Uplan = np.array([[0.0, 0.0]] * ctx["N"], dtype=float)
                 uk = np.array([0.0, 0.0], dtype=float)
+                cost_trace.append(0.0)
             
 
             all_inputs.append(uk.copy())
@@ -339,7 +357,7 @@ def simulate(with_catalyst, steps, Vi):
                 units="M"
             )
             ekf.set_R(R_dynamic)
-            Q_ff = float(ctx_adi["Q"][-1, -1]) if "Q" in ctx_adi else float(Q[-1, -1])
+            Q_ff = float(ctx["Q"][-1, -1]) if "Q" in ctx else float(Q[-1, -1])
             R_ff = float(R_dynamic[0, 0])
             print(f"R update → {R_ff:.3e}  |  Q_ff/R = {Q_ff/R_ff:.3f}")
 
@@ -381,245 +399,338 @@ def simulate(with_catalyst, steps, Vi):
         np.array(cont_end_idx, dtype=int),
         np.array(gamma_hist, dtype=float),
         np.array(gamma_time, dtype=float),
+        np.array(cost_trace, dtype=float),
     )
 
 
-
-
-#  Run both simulations 
-steps = 70
-X_no_live, U_no, t_no_live, X_no_plot, t_no_plot, reset_no, cont_no, gamma_no, t_gamma_no = simulate(with_catalyst=False, steps=steps, Vi=Vi)
-X_yes_live, U_yes, t_yes_live, X_yes_plot, t_yes_plot, reset_yes, cont_yes, gamma_yes, t_gamma_yes = simulate(with_catalyst=True,  steps=steps, Vi=Vi)
-# --- 4. PLOTTING RESULTS ----
-
-import matplotlib.pyplot as plt
-
-# -----------------------------
-# Global plot style
-# -----------------------------
-plt.rcParams['axes.labelsize'] = 14      # axis label font size
-plt.rcParams['xtick.labelsize'] = 12     # x tick font
-plt.rcParams['ytick.labelsize'] = 12     # y tick font
-plt.rcParams['axes.linewidth'] = 1.2
-plt.rcParams['grid.linewidth'] = 0.8
-
-state_titles = [
-    r"$x_1: \mathrm{C_7F_{15}COO^-}$",
-    r"$x_2: \mathrm{C_6F_{13}COO^-}$",
-    r"$x_3: \mathrm{C_5F_{11}COO^-}$",
-    r"$x_4: \mathrm{C_4F_9COO^-}$",
-    r"$x_5: \mathrm{C_3F_7COO^-}$",
-    r"$x_6: \mathrm{C_2F_5COO^-}$",
-    r"$x_7: \mathrm{CF_3COO^-}$",
-    r"$x_8: \mathrm{F^-}$",
-]
-
-# ============================================================
-# Find dosing steps and pre/post-dilution indices
-# ============================================================
-gamma_np = np.asarray(gamma_yes)
-eps_gamma = 1e-12
-
-# step indices where a real dilution happened (gamma < 1)
-dose_steps = np.where(gamma_np < (1.0 - eps_gamma))[0]
-
-# ignore step 0 (there is no "previous segment" for it)
-dose_steps = dose_steps[dose_steps > 0]
-
-reset_yes = np.asarray(reset_yes, dtype=int)
-cont_yes  = np.asarray(cont_yes,  dtype=int)
-
-# for each dosing step s:
-#   pre-dilution index = cont_yes[s-1]  (end of previous segment at t = s*Ts)
-#   post-dilution index = reset_yes[s]  (after dilution at same t)
-pre_idx  = cont_yes[dose_steps - 1]
-post_idx = reset_yes[dose_steps]
-
-# ============================================================
-# STATES: with vs. without catalyst (8x1)
-# ============================================================
-fig_states, axes = plt.subplots(8, 1, figsize=(10, 15), sharex=True)
-axes = axes.flatten()
-
-for i in range(8):
-    ax = axes[i]
-
-    # --- no catalyst ---
-    lbl_no = "no catalyst" if i == 0 else None
-    ax.plot(
-        t_no_plot,
-        X_no_plot[:, i],
-        label=lbl_no,
-        color="tab:gray",
-        linewidth=2.0,
-        alpha=0.9,
-    )
-
-    # --- with catalyst: base continuous curve ---
-    lbl_yes = "with catalyst" if i == 0 else None
-    ax.plot(
-        t_yes_plot,
-        X_yes_plot[:, i],
-        label=lbl_yes,
-        color="tab:blue",
-        linewidth=2.0,
-    )
-
-    # --- draw the actual discontinuities at dosing times ---
-    if dose_steps.size > 0:
-        for k in range(len(dose_steps)):
-            j_pre  = pre_idx[k]
-            j_post = post_idx[k]
-
-            t_dose   = t_yes_plot[j_post]           # same time for pre and post
-            y_before = X_yes_plot[j_pre, i]         # before dilution
-            y_after  = X_yes_plot[j_post, i]        # after dilution (= gamma*y_before)
-
-            # blue vertical drop (same color as trajectory)
-            ax.plot(
-                [t_dose, t_dose],
-                [y_before, y_after],
-                color="tab:blue",
-                linewidth=2.0,
-            )
-
-        # optional: circle markers at post-dilution points
-        lbl_dose = "dose/reset" if i == 0 else None
-        ax.scatter(
-            t_yes_plot[post_idx],
-            X_yes_plot[post_idx, i],
-            s=80,
-            facecolors="white",
-            edgecolors="tab:blue",
-            linewidths=2.0,
-            marker="o",
-            label=lbl_dose,
+def run_weight_sweep(weight_configs, steps, Vi):
+    """
+    Run a set of MPC simulations for different qx/qf pairs.
+    weight_configs: list of {"qx": float, "qf": float, "label": str}
+    """
+    results = []
+    for cfg in weight_configs:
+        overrides = {k: cfg[k] for k in ("qx", "qf") if k in cfg}
+        label = cfg.get("label") or f"qx={overrides.get('qx')}, qf={overrides.get('qf')}"
+        ctx = build_ctx_for_weights(overrides)
+        sim_out = simulate(
+            with_catalyst=True,
+            steps=steps,
+            Vi=Vi,
+            ctx=ctx,
+            weight_label=label,
+            enable_live_plot=False,
         )
 
-    ax.set_title(state_titles[i], fontsize=14)
-    ax.grid(True)
+        results.append(
+            {
+                "label": label,
+                "qx": overrides.get("qx", DEFAULT_WEIGHTS["qx"]),
+                "qf": overrides.get("qf", DEFAULT_WEIGHTS["qf"]),
+                "t_plot": sim_out[4],
+                "X_plot": sim_out[3],
+                "cost_trace": sim_out[-1],
+            }
+        )
+    return results
 
-    legend = ax.legend(
+
+def plot_weight_sweep(results, Ts):
+    """Superimposed plots for ΣPFAS and MPC cost across weight choices."""
+    if not results:
+        return
+
+    fig_state, ax_state = plt.subplots(figsize=(10, 5))
+    for res in results:
+        total_pfas = np.sum(res["X_plot"][:, :7], axis=1)
+        label = f"{res['label']} (qx={res['qx']}, qf={res['qf']})"
+        ax_state.plot(res["t_plot"], total_pfas, label=label, linewidth=2.0)
+
+    ax_state.set_xlabel("Time [s]", fontsize=13, fontweight="bold")
+    ax_state.set_ylabel(r"$\Sigma$ PFAS [M]", fontsize=13, fontweight="bold")
+    ax_state.set_title("State evolution vs. qx/qf", fontsize=14, fontweight="bold")
+    ax_state.grid(True)
+    ax_state.legend(fontsize=11)
+    plt.tight_layout()
+
+    fig_cost, ax_cost = plt.subplots(figsize=(10, 4))
+    for res in results:
+        steps_axis = np.arange(len(res["cost_trace"])) * Ts
+        label = f"{res['label']} (qx={res['qx']}, qf={res['qf']})"
+        ax_cost.plot(steps_axis, res["cost_trace"], label=label, linewidth=2.0)
+
+    ax_cost.set_xlabel("Time [s]", fontsize=13, fontweight="bold")
+    ax_cost.set_ylabel("Cost J*", fontsize=13, fontweight="bold")
+    ax_cost.set_title("MPC objective vs. qx/qf", fontsize=14, fontweight="bold")
+    ax_cost.grid(True)
+    ax_cost.legend(fontsize=11)
+    plt.tight_layout()
+
+
+
+if __name__ == "__main__":
+    #  Run both simulations 
+    steps = 20
+    X_no_live, U_no, t_no_live, X_no_plot, t_no_plot, reset_no, cont_no, gamma_no, t_gamma_no, cost_no = simulate(
+        with_catalyst=False, steps=steps, Vi=Vi, ctx=ctx_adi, weight_label="no_mpc"
+    )
+    X_yes_live, U_yes, t_yes_live, X_yes_plot, t_yes_plot, reset_yes, cont_yes, gamma_yes, t_gamma_yes, cost_yes = simulate(
+        with_catalyst=True,  steps=steps, Vi=Vi, ctx=ctx_adi, weight_label="default"
+    )
+
+    # Configure additional qx/qf sweeps (customize as needed)
+    weight_sweep_configs = [
+        {"label": "qx_low", "qx": 0.6 * ctx_adi["weights_cfg"]["qx"], "qf": ctx_adi["weights_cfg"]["qf"]},
+        {"label": "qf_high", "qx": ctx_adi["weights_cfg"]["qx"], "qf": 1.5 * ctx_adi["weights_cfg"]["qf"]},
+    ]
+
+    # Seed sweep results with the default run so plots include the baseline without re-simulating
+    weight_sweep_results = [
+        {
+            "label": "default",
+            "qx": ctx_adi["weights_cfg"]["qx"],
+            "qf": ctx_adi["weights_cfg"]["qf"],
+            "t_plot": t_yes_plot,
+            "X_plot": X_yes_plot,
+            "cost_trace": cost_yes,
+        }
+    ]
+    weight_sweep_results.extend(run_weight_sweep(weight_sweep_configs, steps=steps, Vi=Vi))
+    # --- 4. PLOTTING RESULTS ----
+
+    import matplotlib.pyplot as plt
+
+    # -----------------------------
+    # Global plot style
+    # -----------------------------
+    plt.rcParams['axes.labelsize'] = 14      # axis label font size
+    plt.rcParams['xtick.labelsize'] = 12     # x tick font
+    plt.rcParams['ytick.labelsize'] = 12     # y tick font
+    plt.rcParams['axes.linewidth'] = 1.2
+    plt.rcParams['grid.linewidth'] = 0.8
+
+    state_titles = [
+        r"$x_1: \mathrm{C_7F_{15}COO^-}$",
+        r"$x_2: \mathrm{C_6F_{13}COO^-}$",
+        r"$x_3: \mathrm{C_5F_{11}COO^-}$",
+        r"$x_4: \mathrm{C_4F_9COO^-}$",
+        r"$x_5: \mathrm{C_3F_7COO^-}$",
+        r"$x_6: \mathrm{C_2F_5COO^-}$",
+        r"$x_7: \mathrm{CF_3COO^-}$",
+        r"$x_8: \mathrm{F^-}$",
+    ]
+
+    # ============================================================
+    # Find dosing steps and pre/post-dilution indices
+    # ============================================================
+    gamma_np = np.asarray(gamma_yes)
+    eps_gamma = 1e-12
+
+    # step indices where a real dilution happened (gamma < 1)
+    dose_steps = np.where(gamma_np < (1.0 - eps_gamma))[0]
+
+    # ignore step 0 (there is no "previous segment" for it)
+    dose_steps = dose_steps[dose_steps > 0]
+
+    reset_yes = np.asarray(reset_yes, dtype=int)
+    cont_yes  = np.asarray(cont_yes,  dtype=int)
+
+    # for each dosing step s:
+    #   pre-dilution index = cont_yes[s-1]  (end of previous segment at t = s*Ts)
+    #   post-dilution index = reset_yes[s]  (after dilution at same t)
+    pre_idx  = cont_yes[dose_steps - 1]
+    post_idx = reset_yes[dose_steps]
+
+    # ============================================================
+    # STATES: with vs. without catalyst (8x1)
+    # ============================================================
+    fig_states, axes = plt.subplots(8, 1, figsize=(10, 15), sharex=True)
+    axes = axes.flatten()
+
+    for i in range(8):
+        ax = axes[i]
+
+        # --- no catalyst ---
+        lbl_no = "no catalyst" if i == 0 else None
+        ax.plot(
+            t_no_plot,
+            X_no_plot[:, i],
+            label=lbl_no,
+            color="tab:gray",
+            linewidth=2.0,
+            alpha=0.9,
+        )
+
+        # --- with catalyst: base continuous curve ---
+        lbl_yes = "with catalyst" if i == 0 else None
+        ax.plot(
+            t_yes_plot,
+            X_yes_plot[:, i],
+            label=lbl_yes,
+            color="tab:blue",
+            linewidth=2.0,
+        )
+
+        # --- draw the actual discontinuities at dosing times ---
+        if dose_steps.size > 0:
+            for k in range(len(dose_steps)):
+                j_pre  = pre_idx[k]
+                j_post = post_idx[k]
+
+                t_dose   = t_yes_plot[j_post]           # same time for pre and post
+                y_before = X_yes_plot[j_pre, i]         # before dilution
+                y_after  = X_yes_plot[j_post, i]        # after dilution (= gamma*y_before)
+
+                # blue vertical drop (same color as trajectory)
+                ax.plot(
+                    [t_dose, t_dose],
+                    [y_before, y_after],
+                    color="tab:blue",
+                    linewidth=2.0,
+                )
+
+            # optional: circle markers at post-dilution points
+            lbl_dose = "dose/reset" if i == 0 else None
+            ax.scatter(
+                t_yes_plot[post_idx],
+                X_yes_plot[post_idx, i],
+                s=80,
+                facecolors="white",
+                edgecolors="tab:blue",
+                linewidths=2.0,
+                marker="o",
+                label=lbl_dose,
+            )
+
+        ax.set_title(state_titles[i], fontsize=14)
+        ax.grid(True)
+
+        legend = ax.legend(
+            loc="upper right",
+            fontsize=11,
+            frameon=True,
+            borderpad=0.6,
+            handlelength=2.5,
+            handletextpad=0.8,
+        )
+        for text in legend.get_texts():
+            text.set_fontweight("bold")
+
+    axes[-1].set_xlabel("Time [s]", fontsize=14, fontweight="bold")
+
+    fig_states.text(
+        0.02, 0.5,
+        "Concentration [M]",
+        va="center",
+        rotation="vertical",
+        fontsize=16,
+        fontweight="bold",
+    )
+
+    plt.tight_layout(rect=[0.06, 0.0, 1.0, 1.0])
+    plt.show()
+
+
+    # ============================================================
+    # 2) INPUTS: only MPC case, both inputs in ONE clean plot
+    # ============================================================
+
+    fig_u, ax_u = plt.subplots(figsize=(10, 4))
+
+    U_yes_np = np.asarray(U_yes)
+
+    # Inputs applied once per control interval
+    t_u_yes    = np.arange(U_yes_np.shape[0] + 1) * Ts      # 0, Ts, ..., N*Ts
+    U_yes_step = np.vstack([U_yes_np, U_yes_np[-1]])        # repeat last value for stairs
+
+    # Catalyst inputs (stairs)
+    ax_u.step(
+        t_u_yes,
+        U_yes_step[:, 0],
+        where="post",
+        label=r"SO$_3^{2-}$",
+        color="tab:blue",
+        linewidth=2.5,
+    )
+    ax_u.step(
+        t_u_yes,
+        U_yes_step[:, 1],
+        where="post",
+        label=r"Cl$^-$",
+        color="tab:orange",
+        linestyle="--",
+        linewidth=2.5,
+    )
+
+    # Maximum constraints (thick, distinct colors)
+    ax_u.axhline(
+        u_max[0],
+        color="red",
+        linestyle=":",
+        linewidth=2.2,
+        label=r"SO$_3^{2-}$ max",
+    )
+    ax_u.axhline(
+        u_max[1],
+        color="purple",
+        linestyle=":",
+        linewidth=2.2,
+        label=r"Cl$^-$ max",
+    )
+
+    # Axis labels (bigger + bold)
+    ax_u.set_xlabel("Time [s]", fontsize=14, fontweight="bold")
+    ax_u.set_ylabel("Catalyst concentration [M]", fontsize=14, fontweight="bold")
+
+    ax_u.grid(True)
+
+    # Legend: bold text, background kept
+    legend_u = ax_u.legend(
         loc="upper right",
-        fontsize=11,
+        fontsize=12,
         frameon=True,
         borderpad=0.6,
-        handlelength=2.5,
+        handlelength=3.0,
         handletextpad=0.8,
     )
-    for text in legend.get_texts():
+    for text in legend_u.get_texts():
         text.set_fontweight("bold")
-
-axes[-1].set_xlabel("Time [s]", fontsize=14, fontweight="bold")
-
-fig_states.text(
-    0.02, 0.5,
-    "Concentration [M]",
-    va="center",
-    rotation="vertical",
-    fontsize=16,
-    fontweight="bold",
-)
-
-plt.tight_layout(rect=[0.06, 0.0, 1.0, 1.0])
-plt.show()
-
-
-# ============================================================
-# 2) INPUTS: only MPC case, both inputs in ONE clean plot
-# ============================================================
-
-fig_u, ax_u = plt.subplots(figsize=(10, 4))
-
-U_yes_np = np.asarray(U_yes)
-
-# Inputs applied once per control interval
-t_u_yes    = np.arange(U_yes_np.shape[0] + 1) * Ts      # 0, Ts, ..., N*Ts
-U_yes_step = np.vstack([U_yes_np, U_yes_np[-1]])        # repeat last value for stairs
-
-# Catalyst inputs (stairs)
-ax_u.step(
-    t_u_yes,
-    U_yes_step[:, 0],
-    where="post",
-    label=r"SO$_3^{2-}$",
-    color="tab:blue",
-    linewidth=2.5,
-)
-ax_u.step(
-    t_u_yes,
-    U_yes_step[:, 1],
-    where="post",
-    label=r"Cl$^-$",
-    color="tab:orange",
-    linestyle="--",
-    linewidth=2.5,
-)
-
-# Maximum constraints (thick, distinct colors)
-ax_u.axhline(
-    u_max[0],
-    color="red",
-    linestyle=":",
-    linewidth=2.2,
-    label=r"SO$_3^{2-}$ max",
-)
-ax_u.axhline(
-    u_max[1],
-    color="purple",
-    linestyle=":",
-    linewidth=2.2,
-    label=r"Cl$^-$ max",
-)
-
-# Axis labels (bigger + bold)
-ax_u.set_xlabel("Time [s]", fontsize=14, fontweight="bold")
-ax_u.set_ylabel("Catalyst concentration [M]", fontsize=14, fontweight="bold")
-
-ax_u.grid(True)
-
-# Legend: bold text, background kept
-legend_u = ax_u.legend(
-    loc="upper right",
-    fontsize=12,
-    frameon=True,
-    borderpad=0.6,
-    handlelength=3.0,
-    handletextpad=0.8,
-)
-for text in legend_u.get_texts():
-    text.set_fontweight("bold")
-
-plt.tight_layout()
-
-# ============================================================
-# 3) Dilution factor over time (with catalyst)
-# ============================================================
-if gamma_yes.size > 0:
-    fig_gamma, ax4 = plt.subplots(figsize=(8, 4))
-
-    t_gamma_step = np.concatenate([t_gamma_yes, [t_gamma_yes[-1] + Ts]])
-    gamma_step   = np.concatenate([gamma_yes,   [gamma_yes[-1]]])
-
-    ax4.step(
-        t_gamma_step,
-        gamma_step,
-        where="post",
-        marker="o",
-        linewidth=2.0,
-    )
-    ax4.set_xlabel("Time [s]", fontsize=14, fontweight="bold")
-    ax4.set_ylabel(r"Dilution factor $\gamma$", fontsize=14, fontweight="bold")
-    ax4.grid(True)
 
     plt.tight_layout()
 
-# Finally, show everything
-plt.show()
+    # ============================================================
+    # 3) Dilution factor over time (with catalyst)
+    # ============================================================
+    if gamma_yes.size > 0:
+        fig_gamma, ax4 = plt.subplots(figsize=(8, 4))
 
-# ----------------------------------------------------------
-# 4. DEGRADATION TIMES (1% of peak concentration)
-# ----------------------------------------------------------
+        t_gamma_step = np.concatenate([t_gamma_yes, [t_gamma_yes[-1] + Ts]])
+        gamma_step   = np.concatenate([gamma_yes,   [gamma_yes[-1]]])
+
+        ax4.step(
+            t_gamma_step,
+            gamma_step,
+            where="post",
+            marker="o",
+            linewidth=2.0,
+        )
+        ax4.set_xlabel("Time [s]", fontsize=14, fontweight="bold")
+        ax4.set_ylabel(r"Dilution factor $\gamma$", fontsize=14, fontweight="bold")
+        ax4.grid(True)
+
+        plt.tight_layout()
+
+    # ============================================================
+    # 4) Weight sweep overlays (ΣPFAS + MPC cost)
+    # ============================================================
+    plot_weight_sweep(weight_sweep_results, Ts)
+
+    # Finally, show everything
+    plt.show()
+
+    # ----------------------------------------------------------
+    # 5. DEGRADATION TIMES (1% of peak concentration)
+    # ----------------------------------------------------------
 
 species_labels = [
     "x1 : C7F15COO-",
@@ -662,6 +773,7 @@ def compute_degradation_times(t, X, case_label):
             t_hit = t[hit_idx]
             print(f"  {species_labels[i]} : t_1% = {t_hit:.2f} s")
 
-# Use the high-resolution trajectories for this (the *_plot arrays)
-compute_degradation_times(t_no_plot,  X_no_plot,  "no catalyst")
-compute_degradation_times(t_yes_plot, X_yes_plot, "with catalyst")
+if __name__ == "__main__":
+    # Use the high-resolution trajectories for this (the *_plot arrays)
+    compute_degradation_times(t_no_plot,  X_no_plot,  "no catalyst")
+    compute_degradation_times(t_yes_plot, X_yes_plot, "with catalyst")

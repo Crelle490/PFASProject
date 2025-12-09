@@ -10,23 +10,10 @@ from casadi_mpc import (
     build_single_shoot_nlp,
 )
 
-
-#DEFAULT_WEIGHTS = {
-#    "qx": 5.0,
-#    "qf": 4,               # not too large, or it will still push to max
-#    "R":  np.array([0.05, 0.05]),   # <-- was ~1e-4; make using u “expensive”
-#    "Rd": np.array([0.005, 0.003]),  # smooth changes but not too restrictive
-#    "eps": 1e-10,
-#    "taus": np.array([1, 0.8, 0.5, 0.4, 0.3, 0.3, 0.2])*0.10, # thresholds for PFAS species
-#    "sharp": 0.4,  # sharpness for priority weights
-#    "q_sum": 5.0,  # weight for sum of PFAS in lex cost
-#    "qf_sum":5.5, # weight for sum of PFAS in
-#}
-
 DEFAULT_WEIGHTS = {
-    "qx": 2,
-    "qf": 12,               # qf = N * qx terminal focus same strength as full horizon. not too large, or it will still push to max
-    "R":  np.array([1, (1)/4.71232876712]),   # <-- was ~1e-4; make using u “expensive”
+    "qx": 2, # state horizon weight
+    "qf": 12,  # qf = N * qx terminal weight
+    "R":  np.array([1, (1)/4.71232876712]),   # Actuator weights [so3, cl] 
     "Rd": np.array([0.0, 0.0]),  # not used 
     "eps": 1e-10,  # not used 
     "taus": np.array([0.50, 0.3, 0.25, 0.2, 0.1, 0.05, 0.02]), # thresholds for PFAS species # not used 
@@ -111,32 +98,6 @@ def load_yaml_covariance(cfg_dir=None):
     return params
 
 
-# Unused PID Controller
-
-def pid(state,dt=1.0,concentraction_of_so3=10e-6,concentraction_of_cl=10e-6):
-    target = 10**(-10)
-    err = state - target
-    Kp = np.array([1.0,1.5])  # proportional gain [so3, cl]
-    control = Kp * err
-
-    # Clamp control signal
-    control = np.maximum(control, 0.0)
-
-    # Determine if control signal is physically possible
-    time_in_sec = dt/60.0
-    max_flow_rate = 11.0/(time_in_sec)  # maximum flow rate of catalyst [ml/s]
-    max_so3_flow = max_flow_rate*concentraction_of_so3
-    max_cl_flow = max_flow_rate*concentraction_of_cl
-    max_control_signal = [max_so3_flow, max_cl_flow]
-
-    # Flow constraint enforcement
-    for i in range(len(control)):
-        if control[i] > max_control_signal[i]:
-            control[i] = max_control_signal[i]
-
-    return control.astype(np.float32)
-
-
 # Compute hydrated electrons
 def estimate_e(constants, c_so3, c_cl, pH, c_pfas_init, k1):
     """
@@ -184,44 +145,6 @@ def estimate_e(constants, c_so3, c_cl, pH, c_pfas_init, k1):
     denominator = (k1 * c_pfas_init) + beta_j + (k_so3_eaq * c_so3) + (k_cl_eaq * c_cl)
 
     return numerator / denominator
-
-# Choose Ts - not used yet
-def choose_Ts_fixed(k_list, e_max, L, T_sens,
-                    safety_rxn=10.0, safety_tr=5.0, dt_int=1.0):
-    """
-    Compute a fixed controller sampling time Ts that is safe for all expected conditions.
-
-    Parameters
-    ----------
-    k_list : list or array
-        Reaction rate constants [s^-1 per M].
-    e_max : float
-        Maximum expected hydrated electron concentration [M].
-    L : float
-        Loop residence/transport time [s].
-    T_sens : float
-        Sensor update period [s].
-    safety_rxn : float
-        Safety factor on reaction speed (default 10).
-    safety_tr : float
-        Safety factor on transport time (default 5).
-    dt_int : float
-        Internal integration step [s].
-
-    Returns
-    -------
-    Ts : float
-        Fixed sampling time for MPC [s].
-    substeps : int
-        Integer number of RK steps per control interval.
-    """
-    k_max = float(max(k_list))
-    Ts_rxn = 1.0 / (safety_rxn * k_max * e_max)  # respect fastest kinetics
-    Ts_tr  = float(L) / safety_tr                # respect transport
-    Ts     = min(Ts_rxn, Ts_tr, float(T_sens))
-    substeps = max(1, int(round(Ts / float(dt_int))))
-    Ts = substeps * float(dt_int)  # snap to integer multiple of dt_int
-    return Ts, substeps
 
 
 def advance_one_control_step(rk_cell, xk, uk, substeps):

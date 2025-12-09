@@ -82,9 +82,9 @@ def make_rhs(P: dict, k_list: np.ndarray, pH: float, c_pfas_init: float):
             Time derivative dx/dt as CasADi SX(8x1)
         """
 
-        # ---------- unpack inputs ----------
-        c_so3 = u[0]     # SO3 concentration
-        c_cl  = u[1]     # Cl- concentration
+        # unpack inputs 
+        c_so3 = u[0]     # SO3 
+        c_cl  = u[1]     # Cl- 
 
 
         # individual PFAS species (7)
@@ -97,10 +97,10 @@ def make_rhs(P: dict, k_list: np.ndarray, pH: float, c_pfas_init: float):
         c_pfas7 = x[6]
         c_f     = x[7]   # fluoride (F-)
 
-        # ---------- hydrated electron concentration ----------
+        #  hydrated electron concentration 
         e = estimate_e_sym(c_so3, c_cl)  # symbolic scalar
 
-        # ---------- explicit differential equations ----------
+        #  explicit differential equations 
         # dx1/dt = -k1 * e * PFAS1
         dx1 = -k_vec[0] * e * c_pfas1
 
@@ -134,7 +134,7 @@ def make_rhs(P: dict, k_list: np.ndarray, pH: float, c_pfas_init: float):
             k_vec[6] * e * c_pfas7
         )
 
-        # ---------- stack into a single SX vector ----------
+        #  stack into a single SX vector 
         xdot = ca.vertcat(dx1, dx2, dx3, dx4, dx5, dx6, dx7, dxF)
         return xdot
 
@@ -169,7 +169,6 @@ def build_interval_function(dt: float, substeps: int, f_rhs) -> ca.Function:
     return ca.Function('Phi', [x, u], [x_next], {'jit': True})
 
 # 2) --- Cost helpers (CasADi-friendly) ---
-
 # sum of PFAS species
 def z_pfas_sym(x: ca.SX) -> ca.SX:
     """Sum of PFAS species x[0:7] (scalar SX)."""
@@ -238,7 +237,6 @@ def stage_cost_sym_lex(xk, uk, uk_prev,
     # Cast constants
     R_c   = ca.DM(R).reshape((NU, 1))        # (2x1)
     Rd_c  = ca.DM(Rd).reshape((NU, 1))       # (2x1)
-    #us_c  = ca.DM(u_scale).reshape((NU, 1))  # (2x1)
     us_c = u_scale
     zsc_c = z_scale + 1e-30                  # scalar MX/SX guard
 
@@ -254,13 +252,9 @@ def stage_cost_sym_lex(xk, uk, uk_prev,
 
     # Focused PFAS penalty: sum_i w_i * (x_i/z)^2 over i=1..7
     x7 = xk[0:7] / zsc_c[0:7] 
-
-    # Penalize F- when away from final target (not used right now)
     L_focus = qx * ca.sum1(w_dyn * (x7**2))
-    F_final = c_pfas_init*2*(NX-1)
-    L_sum = 0 #q_sum * ((F_final-xk[-1]) / zsc_c[-1])**2
 
-    return L_focus + L_sum + u_quad + du_quad
+    return L_focus + u_quad + du_quad
 
 
 
@@ -280,11 +274,7 @@ def terminal_cost_sym_lex(xN, qf: float, z_scale, taus, sharp, qf_sum,c_pfas_ini
     L_focus_N = qf * ca.sum1(w_dyn_N * (x7N**2))
 
 
-    # Penalize F- when terminal away from final target (not used right now)
-    F_final = c_pfas_init*2*(NX-1)
-    L_sum_N   = 0 #qf_sum * ((xN[-1]-F_final)/ zsc_c[-1])**2
-
-    return L_focus_N + L_sum_N
+    return L_focus_N
 
 
 def _vol_from_deltaC(uk: ca.MX,up: ca.MX, Cx: ca.MX, Vs: ca.MX, eps: float = 1e-12) -> ca.MX:

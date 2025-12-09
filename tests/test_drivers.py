@@ -35,7 +35,7 @@ pump.set_speed(1)  # ensure stopped
 time.sleep(1)
 pump.stop()
 
-"""
+
 ADDRS  = [1,2,3,4,5,6,7]  # your pump addresses
 STEP_DELAY = 0.02         # seconds per rpm step (bus-friendly)
 PHASE      = 0.05         # seconds stagger between pumps
@@ -96,5 +96,3 @@ time.sleep(5)
 io.set_many({"valve1": False, "valve2": False, "fans": False})
 io.blink("valve2", period_s=0.5, cycles=2)
 io.close()
-
-"""

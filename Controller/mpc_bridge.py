@@ -1,9 +1,13 @@
 # mpc_bridge.py
+
+"""
+Use MPC by physical hardware loop
+"""
+
 from __future__ import annotations
 import numpy as np
 from functools import lru_cache
 
-# reuse your existing builders
 from helper_functions import (
     find_project_root, load_yaml_params, load_yaml_constants,
     make_normalizers_from_numpy, build_mpc_adi, mpc_adi

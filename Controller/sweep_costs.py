@@ -175,27 +175,37 @@ def run_sim(qx_val, qf_val, steps=50):
         custom_costs.append((cost_mag + cost_pH_change)*1/9.6e-7)
         prev_u = u
 
-    return all_times, all_states, np.array(custom_costs)
+    return all_times, all_states, np.array(custom_costs), u_hist
 
 
 def main():
-    qx_list = [100, 150, 200, 250, 300, 350, 400]
-    qf_list = [500]
+    qx_list = [10, 20, 50, 100, 150]
+    qf_list = [50]
 
     results = {}
     for qx in qx_list:
         for qf in qf_list:
             print(f"Running qx={qx}, qf={qf} ...")
-            t, X, costs = run_sim(qx, qf, steps=14)
-            results[(qx, qf)] = (t, X, costs)
+            t, X, costs, u_hist = run_sim(qx, qf, steps=14)
+            results[(qx, qf)] = (t, X, costs,u_hist)
 
-    fig, axes = plt.subplots(2, 1, figsize=(10, 10))
+    plt.rcParams.update({
+        "axes.labelsize": 12,
+        "axes.titlesize": 13,
+        "legend.fontsize": 10,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "lines.linewidth": 2.0,
+        "grid.alpha": 0.3,
+    })
+
+    fig, axes = plt.subplots(2, 1, figsize=(9, 9), constrained_layout=True)
 
     # Plot ΣPFAS over time
     ax0 = axes[0]
-    for (qx, qf), (t, X, _) in results.items():
+    for (qx, qf), (t, X, _, _) in results.items():
         Z = np.sum(X[:, :7], axis=1)
-        ax0.plot(t, Z, label=f"qx={qx}")
+        ax0.plot(t, Z, label=f"qx={qx}, qf={qf}")
     ax0.set_xlabel("Time [s]")
     ax0.set_ylabel("Σ PFAS [M]")
     ax0.set_title("Σ PFAS vs time for different (qx, qf)")
@@ -204,20 +214,40 @@ def main():
 
     # Plot actuation-only costs per step
     ax1 = axes[1]
-    for (qx, qf), (_, _, costs) in results.items():
-        ax1.plot(np.arange(len(costs)), costs, label=f"qx={qx}")
+    for (qx, qf), (_, _, costs,_) in results.items():
+        ax1.plot(np.arange(len(costs)), costs, label=f"qx={qx}, qf={qf}")
     ax1.set_xlabel("Step")
     ax1.set_ylabel("Cost per mol PFAS removed [DKK/mol] (414.05g PFOA)")
     ax1.set_title("Actuation-only cost per step")
     ax1.grid(True)
     ax1.legend()
 
-    plt.tight_layout()
     out_path = Path(__file__).resolve().parent.parent / "sweep_costs.png"
     plt.savefig(out_path, dpi=150)
     print(f"Saved figure to {out_path}")
-
     plt.show()
+
+    # Per-actuation subplots (SO3, Cl, pH, Intensity)
+    fig_act, axes_act = plt.subplots(4, 1, figsize=(9, 10), sharex=True, constrained_layout=True)
+    labels = ["SO3 [M]", "Cl [M]", "pH [-]", "Intensity [-]"]
+    for idx, ax in enumerate(axes_act):
+        for (qx, qf), (t, X, _, u_hist) in results.items():
+            # u_hist shape: (steps, 4)
+            ax.plot(t[:-1], u_hist[:, idx], label=f"qx={qx}, qf={qf}" if idx == 0 else None)
+        ax.set_ylabel(labels[idx])
+        ax.grid(True)
+        if idx == 0:
+            ax.set_title("Inputs vs time for different qx")
+    axes_act[-1].set_xlabel("Time [s]")
+    axes_act[0].legend()
+    # intensity axis (last subplot) limited to [0, 1]
+    axes_act[-1].set_ylim(0.0, 1.1)
+    out_path_act = Path(__file__).resolve().parent.parent / "sweep_costs_inputs.png"
+    plt.savefig(out_path_act, dpi=150)
+    print(f"Saved input figure to {out_path_act}")
+    plt.show()
+    
+
 
 
 if __name__ == "__main__":

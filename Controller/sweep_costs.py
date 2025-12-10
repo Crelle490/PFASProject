@@ -18,8 +18,8 @@ from helper_functions import (
     build_mpc_adi,
     mpc_adi,
     vol_from_deltaC_safe,
+    estimate_e_with_intensity
 )
-from utils import estimate_e_with_intensity
 
 
 # Import integrator without breaking relative paths

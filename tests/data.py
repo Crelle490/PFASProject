@@ -37,7 +37,7 @@ def try_read_csv(p: Path) -> pd.DataFrame | None:
 
     # If no columns (weird), bail
     if df is None or df.shape[1] == 0:
-        print(f"[SKIP] No columns in: {p.name}")
+        print(f"[SKIP] No of columns in: {p.name}")
         return None
 
     # If header missing, try to assign expected names when counts match

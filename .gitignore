@@ -8,4 +8,7 @@ simulated_predictor.py
 plots_device_activity.py
 live_plot.png
 index.html
-
+Old but maybe gold/
+Models_Single_Scripts/
+checkpoints/
+*.npz

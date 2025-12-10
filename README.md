@@ -24,7 +24,7 @@ Comprehensive controls, modeling, and simulation code for per- and polyfluoroalk
   ```bash
   python -m venv .venv
   source .venv/bin/activate
-  pip install tensorflow numpy pandas matplotlib casadi pyyaml typer pyserial scipy
+  pip install tensorflow numpy pandas matplotlib casadi pyyaml typer pyserial scipy SciencePlots
   ```
 
 Some functionality (e.g., pump/sensor drivers) requires access to serial devices; ensure the user running the code has permission to open the configured ports.

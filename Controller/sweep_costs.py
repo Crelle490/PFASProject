@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
+import scienceplots
 
 from helper_functions import (
     find_project_root,
@@ -101,7 +102,7 @@ def run_sim(qx_val, qf_val, steps=50):
         c_pfas_init=init_vals["c_pfas_init"],
         dt=dt_sim,
         substeps=substeps,
-        N=3,
+        N=6,
         weights=weights,
         u_max=u_max,
         x0_flat=x0_flat,
@@ -179,50 +180,65 @@ def run_sim(qx_val, qf_val, steps=50):
 
 
 def main():
-    qx_list = [10, 20, 50, 100, 150]
+    qx_list = [25, 50, 75, 100, 150,200]
     qf_list = [50]
+    step_arr = [17,14]
 
     results = {}
     for qx in qx_list:
         for qf in qf_list:
+            if qx >= 100:
+                n_steps = step_arr[1]
+            else:
+                n_steps = step_arr[0]
             print(f"Running qx={qx}, qf={qf} ...")
-            t, X, costs, u_hist = run_sim(qx, qf, steps=14)
+            t, X, costs, u_hist = run_sim(qx, qf, steps=n_steps)
             results[(qx, qf)] = (t, X, costs,u_hist)
 
-    plt.rcParams.update({
-        "axes.labelsize": 12,
-        "axes.titlesize": 13,
-        "legend.fontsize": 10,
-        "xtick.labelsize": 10,
-        "ytick.labelsize": 10,
-        "lines.linewidth": 2.0,
-        "grid.alpha": 0.3,
-    })
+    plt.style.use(["science", "grid"])
+    plt.rcParams.update(
+    {
+        "legend.loc": "1",
+        "font.family": "serif",
+    }
+)
 
     fig, axes = plt.subplots(2, 1, figsize=(9, 9), constrained_layout=True)
 
     # Plot ΣPFAS over time
     ax0 = axes[0]
+    i = 0
     for (qx, qf), (t, X, _, _) in results.items():
+        i += 1
         Z = np.sum(X[:, :7], axis=1)
-        ax0.plot(t, Z, label=f"qx={qx}, qf={qf}")
+        if i == 1:
+            ax0.hlines(Z[0]*0.1, xmin=t[0]-1000, xmax=t[-1]+1000, colors='k', linestyles='dashed', label='$10\%$ remaning')
+            ax0.hlines(Z[0]*0.01, xmin=t[0]-1000, xmax=t[-1]+1000, colors='k', linestyles='dashed', label='$1\%$ remaning')
+            ax0.set_xlim(t[0], t[-1])
+        
+        ax0.plot(t, Z, label=f"qx={qx}")
     ax0.set_xlabel("Time [s]")
-    ax0.set_ylabel("Σ PFAS [M]")
-    ax0.set_title("Σ PFAS vs time for different (qx, qf)")
+    ax0.set_ylabel("$\sum$ PFAS [M]")
+    ax0.set_title("$\sum$ PFAS vs time for different parameter weights")
     ax0.grid(True)
-    ax0.legend()
+    ax0.legend(fancybox=False, edgecolor="black")
+
 
     # Plot actuation-only costs per step
     ax1 = axes[1]
-    for (qx, qf), (_, _, costs,_) in results.items():
-        ax1.plot(np.arange(len(costs)), costs, label=f"qx={qx}, qf={qf}")
-    ax1.set_xlabel("Step")
-    ax1.set_ylabel("Cost per mol PFAS removed [DKK/mol] (414.05g PFOA)")
-    ax1.set_title("Actuation-only cost per step")
+    i = 0
+    for (qx, qf), (t, _, costs,_) in results.items():
+        ax1.plot(t[0:-1], costs, label=f"qx={qx}")
+        i +=1
+        if i == 1:
+            ax1.set_xlim(t[0], t[-1])
+    ax1.set_xlabel("Time [s]")
+    ax1.set_ylabel("Cost [DKK/mol] (414.05g PFOA)")
+    ax1.set_title("Actuation-only cost")
     ax1.grid(True)
-    ax1.legend()
+    ax1.legend(fancybox=False, edgecolor="black")
 
-    out_path = Path(__file__).resolve().parent.parent / "sweep_costs.png"
+    out_path = Path(__file__).resolve().parent.parent / "results" / "sweep_costs.png"
     plt.savefig(out_path, dpi=150)
     print(f"Saved figure to {out_path}")
     plt.show()
@@ -233,19 +249,20 @@ def main():
     for idx, ax in enumerate(axes_act):
         for (qx, qf), (t, X, _, u_hist) in results.items():
             # u_hist shape: (steps, 4)
-            ax.plot(t[:-1], u_hist[:, idx], label=f"qx={qx}, qf={qf}" if idx == 0 else None)
+            ax.plot(t[:-1], u_hist[:, idx], label=f"qx={qx}" if idx == 0 else None)
         ax.set_ylabel(labels[idx])
         ax.grid(True)
         if idx == 0:
             ax.set_title("Inputs vs time for different qx")
     axes_act[-1].set_xlabel("Time [s]")
-    axes_act[0].legend()
+    axes_act[0].legend(fancybox=False, edgecolor="black")
     # intensity axis (last subplot) limited to [0, 1]
     axes_act[-1].set_ylim(0.0, 1.1)
-    out_path_act = Path(__file__).resolve().parent.parent / "sweep_costs_inputs.png"
+    out_path_act = Path(__file__).resolve().parent.parent /"results" / "sweep_costs_inputs.png"
     plt.savefig(out_path_act, dpi=150)
     print(f"Saved input figure to {out_path_act}")
     plt.show()
+    
     
 
 

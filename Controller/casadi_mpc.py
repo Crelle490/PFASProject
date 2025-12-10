@@ -445,13 +445,13 @@ def build_single_shoot_nlp(Phi: ca.Function,
 
         # Limit pH
         g.append(du[2]/14.0)
-        lbg += [0.0]
-        ubg += [3.0]
+        lbg += [-10.0]
+        ubg += [10.0]
 
         # Limit intensity
         g.append(du[3])
-        lbg += [0.0]
-        ubg += [0.5]
+        lbg += [-1.0]
+        ubg += [1.0]
 
         # update state for next step
         Vs = Vs_after

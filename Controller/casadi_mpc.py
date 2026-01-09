@@ -471,12 +471,14 @@ def build_single_shoot_nlp(Phi: ca.Function,
     # g: constraint vector (with bounds lbg, ubg).
     nlp = {'x': V, 'p': p, 'f': J, 'g': G}
 
+    """
     solver = ca.nlpsol('solver', 'ipopt', nlp, {
         # Turn OFF lam_p (post-processing that often NaNs with parameters)
         'calc_lam_p': False,          # <-- add this
 
         # (Optional) keep lam_x if you use it; otherwise you can disable too
         # 'calc_lam_x': True,
+
 
         'ipopt': {
             'print_level': 1,
@@ -486,6 +488,19 @@ def build_single_shoot_nlp(Phi: ca.Function,
         },
         'print_time': True
     })
+    """
+    nlp_opts = {
+        "ipopt": {
+            "hessian_approximation": "limited-memory",   # <- key change
+            "limited_memory_max_history": 20,            # tweakable
+            "tol": 1e-6,
+            "print_level": 0,
+        },
+        "print_time": 0,
+        "jit": False,    # also turn off JIT at the solver wrapper level (belt & suspenders)
+    }
+    solver = ca.nlpsol("solver", "ipopt", nlp, nlp_opts)
+
     
     
     

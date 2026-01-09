@@ -17,23 +17,41 @@ from PFAS_CTRL.drivers.flow_slf3c import SLF3C
 from PFAS_CTRL.drivers.ph_sensor import SerialConfig, PHAnalyzer
 from PFAS_CTRL.drivers.flouride_sensor import SerialConfig, FluorideAnalyzer
 from PFAS_CTRL.drivers.gpio_control import GPIOCtrl
+from PFAS_CTRL.drivers.orion_sensor import SerialConfig, OrionVersaStarPro
 import time
 
 
 # -- Pump Test -- doesnt work with single address!!!
-ser = serial.Serial("/dev/ttyUSB1", 9600, bytesize=8,
+ser = serial.Serial("/dev/ttyUSB0", 9600, bytesize=8,
                     parity=serial.PARITY_EVEN, stopbits=1, timeout=0.5)
 
 gpio = GPIOCtrl(active_low=False).open()
-gpio.on("fans")
-time.sleep(2)
-gpio.off("fans")
-gpio.off("valve1")
-gpio.on("valve2")
+#gpio.on("valve3")
+#time.sleep(2)
+#gpio.off("valve3")
+
+#orion = OrionVersaStarPro(SerialConfig(port="/dev/ttyACM0", baudrate=115200,
+#                                 parity="EVEN", stopbits=1, timeout=1.0))
+#orion.open()
+#try:
+#    print("One-shot ORP:", orion.read())
+#    print("3 seconds @ 5 Hz:", orion.read(seconds=0.5, hz=5))
+#finally:
+#    orion.close()
+
+#gpio.on("fans")
+#time.sleep(2)
+#gpio.off("fans")
+#gpio.off("valve1")
+#gpio.on("valve2")
+gpio.on("valve3")
 pump   = WX10Pump(port=ser, address=31)
-pump.set_speed(1)  # ensure stopped
-time.sleep(1)
+pump.set_speed(50, cw=False)  # ensure stopped
+time.sleep(30)
 pump.stop()
+
+
+# Results; 2: 7.20, 3: 7.48, 7: 7.53, 5: 8.3, 4: 8.68
 
 """
 ADDRS  = [1,2,3,4,5,6,7]  # your pump addresses

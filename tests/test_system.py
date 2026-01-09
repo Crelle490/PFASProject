@@ -6,8 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import numpy as np
 
-from PFAS_CTRL.system.pfas_controller import PFASController, PumpBusConfig, PHBusConfig, FluorideBusConfig
-
+from PFAS_CTRL.system.pfas_controller import OrionBusConfig, PFASController, PumpBusConfig, PHBusConfig, FluorideBusConfig, OrionVersaStarPro
+from LivePlotter import LivePlotter, PlotConfig
 
 
 # --- LOAD CONFIG + PARAMS -----
@@ -51,7 +51,6 @@ from helper_functions import (
     vol_from_deltaC_safe, advance_one_control_step,
     build_mpc_adi, mpc_adi, make_normalizers_from_numpy
 )
-from live_plotter import LiveMPCPlot, predict_horizon_old
 
 # Find parameters
 here = Path(__file__).resolve().parent
@@ -62,8 +61,8 @@ cfg_dir = root / "config"
 # load parameters
 params, init_vals = load_yaml_params(cfg_dir)
 pH = float(init_vals["pH"])
-c_cl_0 = float(init_vals["c_cl"])
-c_so3_0 = float(init_vals["c_so3"])
+c_cl_0 = float(init_vals["c_cl_0"])
+c_so3_0 = float(init_vals["c_so3_0"])
 dt_sim = 1.0
 k_values = load_yaml_constants(cfg_dir)
 k1, k2, k3, k4, k5, k6, k7 = [k_values[f'k{i}'] for i in range(1, 8)]
@@ -97,10 +96,10 @@ x0_flat = initial_state.reshape(-1)         # shape (8,)
 weights = DEFAULT_WEIGHTS
 
 # Volume parameters
-Vi = init_vals["Vi"]*1000 # initial volume
-Vr = init_vals["Vr"]*1000 # reactor volume
-Vmax = init_vals["Vmax"]*1000 # maximum volume
-V_sens = init_vals["V_sens"]*1000 # volume sampled each step
+Vi = 100#init_vals["Vi"]*1000 # initial volume
+Vr = 30#init_vals["Vr"]*1000 # reactor volume
+Vmax = 200#init_vals["Vmax"]*1000 # maximum volume
+V_sens = 10#init_vals["V_sens"]*1000 # volume sampled each step
 
 # integration cell
 rk_cell = RungeKuttaIntegratorCell(
@@ -119,6 +118,16 @@ measured_F = [0.0]  # initial measurement (dummy)
 uk_prev = np.array([0.000,0.000], dtype=float)
 x_scale, u_scale = make_normalizers_from_numpy(x0_flat, u_max)
 
+
+plot = LivePlotter(PlotConfig(
+    title="PFAS Live Control",
+    max_points=400,
+    refresh_hz=8,
+    show_states=True,
+    state_indices=[0, 1, 2],  # pick what matters
+    state_labels=["c_PFAS", "c_F", "c_SOMETHING"],
+))
+
 # EKF related
 e_init = estimate_e(params, c_so3=uk_prev[0], c_cl=uk_prev[1], pH=pH, c_pfas_init=init_vals["c_pfas_init"], k1=k1)
 Q, R, P0 = make_covariances_for_fluoride_only(
@@ -136,9 +145,15 @@ Q, R, P0 = make_covariances_for_fluoride_only(
 
 # --- STEP 0: Initialize controller -----
 ctrl = PFASController(
-    pump_cfg=PumpBusConfig(port="/dev/ttyUSB1"),
-    ph_cfg=PHBusConfig(port="/dev/ttyUSB0", device_id=2),
+    pump_cfg=PumpBusConfig(port="/dev/ttyUSB0"),
+    ph_cfg=PHBusConfig(port="/dev/ttyUSB1", device_id=2),
     fluoride_cfg=FluorideBusConfig(port="/dev/ttyUSB0", device_id=1),
+    orion_cfg=OrionBusConfig(
+        port="/dev/ttyACM0",
+        channel=1,
+        ion_marker="F-",
+        default_single_shot_s=10,
+    )
 )
 
 substeps = round(Ts / dt_sim)
@@ -170,15 +185,14 @@ ekf = init_EKF(
 ekf.use_adaptive_R = False
 print(f"[ekf-init] id={id(ekf)} use_adaptive_R={ekf.use_adaptive_R} R_floor={ekf.R_floor}")
 
-
-
-
-
-# --- STEP 1: fill five resvior tubes ----- 
+"""
+# --- STEP 1: fill five resvior tubes -----
+print("Step 1: Filling tubes...") 
 info = ctrl.initaize()
-nbatch = 5
+nbatch = 1
 
 # --- STEP 2: create mixture -----
+print("Step 2: Creating mixture...") 
 info = ctrl.create_mixture(Vi, pfas=0.5, c1=0.25, c2=0.25, speed=99, sequential=False)
 print(info)
 Vs = Vi
@@ -186,35 +200,47 @@ xk_flat = initial_state.reshape(-1)  # (8,)
 uk_prev = np.array([0.0, 0.0], dtype=float)
 xk_sum = np.sum(xk_flat)
 eps = 1e-12
+k=0 # LOOP COUNTER
 
 #for i in range(nbatch):
 while xk_sum > eps:
+    k += 1
     # --- STEP 3: Run mixture in Reactor -----
+    print("Step 3: Running mixture in reactor...") 
     ctrl.initialize_reactors() # fill pump tubes
-    info = ctrl.supply_reactor(reaction_time_s=50, dosage_ml=Vs, cw=True)
+    info = ctrl.supply_reactor(reaction_time_s=60, dosage_ml=Vs, cw=True)
     print(info)
     ctrl.initialize_reactors() # empty pump tubes
 
     # --- STEP 4: Sensor sample -----
+    print("Step 4: Sampling sensor...")
     ctrl.initialize_sensor() # prime sensor line
     info = ctrl.dispatch_sensor(volume_ml=V_sens, speed_pct=99, buffer_pct=0.2)
     print(info)
 
     # --- STEP 5: Resend rest of volume to stirrer -----
+    print("Step 5: Sending rest of volume to stirrer...")
     info = ctrl.dispatch_stirrer_rest(total_ml=Vs, already_sent_ml=V_sens, speed_pct=99)
     print(info)
 
 
     # --- STEP 6: Pump tubes to sensor clean -----
+    print("Step 6: Cleaning sensor tubes...")
     info = ctrl.dispatch_sensor(volume_ml=15, speed_pct=99, buffer_pct=0)
     Vs -= V_sens
 
     # --- STEP 7: Read sensor data and update EKF -----
-    if ctrl.fluoride:
-        ctrl.fluoride.open()
-        F_mgL = ctrl.fluoride.read()
-        ctrl.fluoride.close()
-        F_M = (float(F_mgL) / 19000.0) / 1000.0
+    print("Step 7: Reading sensor and updating EKF...")
+    if ctrl.orion:
+        ctrl.orion.open()
+        F_ppm = ctrl.orion.read()     # returns float (value after "F-")
+        ctrl.orion.close()
+
+        MOLAR_MASS_F_G_MOL = 19.00
+        F_M = float(F_ppm) / (MOLAR_MASS_F_G_MOL * 1000.0)
+
+        print("F_ppm:", F_ppm)
+        print("F_M:", F_M)
 
         R_dynamic = compute_dynamic_R_from_measurement(
             measurement=F_M, rel_accuracy=0.02, min_std=2e-20, units="M"
@@ -232,10 +258,12 @@ while xk_sum > eps:
         xk_sum = np.sum(xk_flat)
 
     # --- STEP 8: Clean sensors -----
-    ctrl.flush_sensor_water(volume_ml=10, speed_pct=99)
+    print("Step 8: Flushing sensor...")
+    ctrl.flush_sensor_water(volume_ml=15, speed_pct=99)
 
 
     # --- STEP 9: Add catalysts -----
+    print("Step 9: Computing and adding catalysts...")
     uk, Uplan, Jstar = mpc_adi(
         xk_flat=xk_flat, uk_prev=uk_prev, ctx=ctx_adi,
         Vs0=Vs/1000.0,          # L
@@ -250,18 +278,29 @@ while xk_sum > eps:
         pump_so3="c1", pump_cl="c2",
         speed_pct=99.0,  # full speed
     )
+    print("MPC plan:", plan)
     
     # update properties
     Vs = plan["Vs_ml_after"]  # update volume
     uk_prev = uk.copy()
-
+    plot.update(
+        t=time.time(),
+        y=F_ppm,
+        y2=F_M,
+        u=[uk[0], uk[1]],
+        x=xk_state.reshape(-1),     # optional
+        pred=None,                  # optional
+        meta={"k": k, "Ts": Ts},
+    )
+"""
 
 # --- STEP 0: Final flush -----
-ctrl.exit_fluid(volume_ml=Vs, speed_pct=99.0)
+print("Final flush...")
+#ctrl.exit_fluid(volume_ml=10, speed_pct=99.0)
 
-ctrl.empty_tubes(volume_ml=Vs, speed_pct=50)
+ctrl.empty_tubes(volume_ml=30, speed_pct=50)
 
-
+"""
 # Sensors (manual open/close)
 if ctrl.ph:
     ctrl.ph.open()
@@ -272,5 +311,5 @@ if ctrl.fluoride:
     ctrl.fluoride.open()
     print("F mg/L:", ctrl.fluoride.read())
     ctrl.fluoride.close()
-
+"""
 ctrl.close()

@@ -1,24 +1,28 @@
 # PFAS_CTRL/drivers/gpio_io.py
 from __future__ import annotations
+
 from typing import Iterable, Mapping, Union
 import time
+
 import gpiod
 from gpiod.line import Direction, Value
 
 NameOrPin = Union[str, int]
 
+
 class GPIOCtrl:
     """
-    Minimal controller for 3 outputs on gpiochip4:
+    Minimal controller for outputs on gpiochip4:
       - valve1 -> BCM 23
       - valve2 -> BCM 24
+      - valve3 -> BCM 13
       - fans   -> BCM 25
 
     Keeps lines requested for the lifetime of this object so states persist
     across calls. Default logic is active-high (active_low=False).
     """
 
-    DEFAULT_MAP = {"valve1": 23, "valve2": 24, "fans": 25}
+    DEFAULT_MAP = {"valve1": 23, "valve2": 24, "valve3": 17, "fans": 25}
 
     def __init__(
         self,
@@ -49,7 +53,7 @@ class GPIOCtrl:
             cfg = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=self._default_value)
         self._req = self._chip.request_lines(
             consumer="pfas-io",
-            config={pin: cfg for pin in self.pin_map.values()}
+            config={pin: cfg for pin in self.pin_map.values()},
         )
         return self
 
@@ -77,7 +81,15 @@ class GPIOCtrl:
             return which
         if which in self.pin_map:
             return self.pin_map[which]
-        raise ValueError(f'Unknown target {which!r}; use one of {list(self.pin_map)} or a BCM int')
+        raise ValueError(f"Unknown target {which!r}; use one of {list(self.pin_map)} or a BCM int")
+
+    def _from_pin(self, pin: int) -> str:
+        """Inverse of _to_pin: map BCM pin number back to logical name if possible."""
+        for name, p in self.pin_map.items():
+            if p == pin:
+                return name
+        # Fallback if not found: just return the numeric pin as a string
+        return f"pin{pin}"
 
     @property
     def _ON(self) -> Value:
@@ -91,14 +103,22 @@ class GPIOCtrl:
     def set(self, which: NameOrPin | Iterable[NameOrPin], state: bool) -> None:
         """Set one or many outputs True/False (on/off)."""
         assert self._req, "open() first"
-        pins = [self._to_pin(which)] if not isinstance(which, (list, tuple, set)) else [self._to_pin(w) for w in which]
+
+        pins = (
+            [self._to_pin(which)]
+            if not isinstance(which, (list, tuple, set))
+            else [self._to_pin(w) for w in which]
+        )
+
         val = self._ON if state else self._OFF
         for p in pins:
             self._req.set_value(p, val)
+
             if self.logger is not None:
-                name = self._from_pin(p)  # or use 'valve1'/'valve2'
-                if name in ("valve1", "valve2"):
-                    ch = "valve_1" if name == "valve1" else "valve_2"
+                name = self._from_pin(p)
+                # Log all valves consistently as valve_1, valve_2, valve_3, ...
+                if name.startswith("valve"):
+                    ch = f"valve_{name[-1]}"
                     self.logger.log(ch, 1 if state else 0)
 
     def on(self, which: NameOrPin | Iterable[NameOrPin]) -> None:
@@ -111,6 +131,7 @@ class GPIOCtrl:
         """Blink a single output (non-blocking alternatives can be added later)."""
         assert self._req, "open() first"
         pin = self._to_pin(which)
+
         for _ in range(int(cycles)):
             self._req.set_value(pin, self._ON)
             time.sleep(period_s)
@@ -118,6 +139,6 @@ class GPIOCtrl:
             time.sleep(period_s)
 
     def set_many(self, plan: Mapping[NameOrPin, bool]) -> None:
-        """Set multiple named pins atomically-ish (loop). Example: {'valve1':True, 'fans':False}."""
+        """Set multiple named pins atomically-ish (loop). Example: {'valve1': True, 'fans': False}."""
         for k, v in plan.items():
             self.set(k, bool(v))

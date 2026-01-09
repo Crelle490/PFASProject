@@ -1,18 +1,8 @@
-# Mangler
-# - supply_reactor: change L&D + include flowsensor = 0 as stop condition (low pass filter)
-# - supply reactor: disprecancy between A*L+D and measnurement
-# - add flowsensor to dispatch_sensor and check experiment
-# - real time plotting
-# - low pass filter
-# - vand i tubes
-
-
-# PFAS_CTRL/system/pfas_controller.py
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Optional, Any
 import serial
-import time 
+import time
 
 
 from PFAS_CTRL.drivers.pump_wx10 import WX10Pump
@@ -20,6 +10,35 @@ from PFAS_CTRL.drivers.gpio_control import GPIOCtrl
 from PFAS_CTRL.drivers.flow_slf3c import SLF3C
 from PFAS_CTRL.drivers.flouride_sensor import SerialConfig as FluorSerialConfig, FluorideAnalyzer
 from PFAS_CTRL.drivers.ph_sensor import SerialConfig as PHSerialConfig, PHAnalyzer
+from PFAS_CTRL.drivers.orion_sensor import SerialConfig as OrionSerialConfig, OrionVersaStarPro
+
+
+# ---------------- Low-pass filter helper ----------------
+
+class FirstOrderLPF:
+    """Simple 1st-order low-pass filter with time-constant tau."""
+    def __init__(self, tau_s: float, x0: float = 0.0):
+        self.tau_s = float(max(1e-6, tau_s))
+        self.y = float(x0)
+        self._t_prev = None
+
+    def reset(self, x0: float = 0.0):
+        self.y = float(x0)
+        self._t_prev = None
+
+    def update(self, x: float, t: float | None = None) -> float:
+        if t is None:
+            t = time.monotonic()
+        x = float(x)
+        if self._t_prev is None:
+            self._t_prev = t
+            self.y = x
+            return self.y
+        dt = max(0.0, float(t - self._t_prev))
+        self._t_prev = t
+        alpha = dt / (self.tau_s + dt)
+        self.y = (1.0 - alpha) * self.y + alpha * x
+        return self.y
 
 
 # ---- simple configs ----
@@ -30,8 +49,7 @@ class PumpBusConfig:
     timeout: float = 0.5
     addrs: Dict[str, int] | None = None
     pumps: Dict[str, Dict[str, int]] | None = None
-    pump_num_rollers: Dict[str, int] | None = None  
-
+    pump_num_rollers: Dict[str, int] | None = None
 
     def __post_init__(self):
         if self.addrs is None:
@@ -48,14 +66,15 @@ class PumpBusConfig:
         if self.pump_num_rollers is None:
             # Description -> rollers
             self.pump_num_rollers = {
-            "mix_to_reaction":   8,
-            "pfas":              4,
-            "c1":                8,
-            "buffer":            4,
-            "water":             4,
-            "holding_to_valves": 4,
-            "c2":                8,
-        }
+                "mix_to_reaction":   8,
+                "pfas":              4,
+                "c1":                8,
+                "buffer":            4,
+                "water":             4,
+                "holding_to_valves": 4,
+                "c2":                8,
+            }
+
 
 @dataclass
 class PHBusConfig:
@@ -65,6 +84,7 @@ class PHBusConfig:
     stopbits: int = 1
     timeout: float = 1.0
     device_id: int = 2
+
 
 @dataclass
 class FluorideBusConfig:
@@ -76,16 +96,32 @@ class FluorideBusConfig:
     device_id: int = 1
 
 
+@dataclass
+class OrionBusConfig:
+    """
+    Orion Versa Star Pro over USB serial.
+    Use your working port (/dev/ttyACM0 or /dev/serial/by-id/...).
+    """
+    port: str = "/dev/ttyACM0"
+    baudrate: int = 115200
+    parity: str = "N"
+    stopbits: int = 1
+    timeout: float = 1.0
+    channel: int = 1
+    ion_marker: str = "F-"   # value after this token
+    default_single_shot_s: int = 10
+
 
 class PFASController:
     """
     Minimal aggregator:
       - self.pump         : WX10Pump on RS-485 (shared bus)
       - self.pump_addrs   : logical name -> address
-      - self.gpio         : GPIOCtrl (valve1/valve2/fans)
+      - self.gpio         : GPIOCtrl (valves/fans)
       - self.flow         : SLF3C flow helper
       - self.ph           : PHAnalyzer (call .open()/.close() yourself)
       - self.fluoride     : FluorideAnalyzer (call .open()/.close() yourself)
+      - self.orion        : OrionVersaStarPro (call .open()/.close() yourself)
       - self.logger       : optional TimelineLogger-like object
     """
 
@@ -94,35 +130,36 @@ class PFASController:
         pump_cfg: PumpBusConfig = PumpBusConfig(),
         ph_cfg: Optional[PHBusConfig] = None,
         fluoride_cfg: Optional[FluorideBusConfig] = None,
+        orion_cfg: Optional[OrionBusConfig] = None,
         *,
-        logger: Any | None = None,           # <--- accept logger
+        logger: Any | None = None,
         gpio_active_low: bool = False,
         gpio_chip: str = "/dev/gpiochip4",
     ):
         # store logger
         self.logger = logger
 
-        # Pump bus (opens immediately; WX10Pump uses provided Serial)
+        # Pump bus
         self.pump_cfg = pump_cfg
         self.pump_ser = serial.Serial(
             pump_cfg.port, pump_cfg.baudrate,
             bytesize=8, parity=serial.PARITY_EVEN, stopbits=1,
             timeout=pump_cfg.timeout,
         )
-        # keep original WX10Pump signature if that’s what you had before
         self.pump = WX10Pump(self.pump_ser)
 
-        # logical names -> RS485 addresses etc.
         self.pump_addrs = dict(pump_cfg.addrs)
         self.pump_num_rollers = dict(pump_cfg.pump_num_rollers)
-        self.reactor_volume_ml = 6.3989  # measured reactor volume
-        self.reactor_tube_volume = 3.8   # measured tube volume
 
-        # GPIO + Flow (pass logger into GPIO if it supports it)
+        # volumes
+        self.reactor_volume_ml = 6.5   # measured reactor volume (L)
+        self.reactor_tube_volume = 3.8    # measured tube/dead volume (D)
+
+        # GPIO + Flow
         self.gpio = GPIOCtrl(
             active_low=gpio_active_low,
             chip_path=gpio_chip,
-            logger=self.logger,        # <--- now self.logger exists
+            logger=self.logger,
         )
         self.gpio.open()
         self.flow = SLF3C()
@@ -142,7 +179,7 @@ class PFASController:
                 device_id=ph_cfg.device_id,
             )
 
-        # Fluoride (not opened here)
+        # Fluoride Modbus (not opened here)
         self.fluoride = None
         if fluoride_cfg:
             self.fluoride_cfg = fluoride_cfg
@@ -157,18 +194,32 @@ class PFASController:
                 device_id=fluoride_cfg.device_id,
             )
 
+        # Orion Versa Star Pro (not opened here)
+        self.orion = None
+        if orion_cfg:
+            self.orion_cfg = orion_cfg
+            self.orion = OrionVersaStarPro(
+                OrionSerialConfig(
+                    port=orion_cfg.port,
+                    baudrate=orion_cfg.baudrate,
+                    parity=orion_cfg.parity,
+                    stopbits=orion_cfg.stopbits,
+                    timeout=orion_cfg.timeout,
+                ),
+                channel=orion_cfg.channel,
+                default_single_shot_s=orion_cfg.default_single_shot_s,
+                ion_marker=orion_cfg.ion_marker,
+            )
+
     # --- logging helpers -------------------------------------------------
 
-    def _log_pump_run(self, pump_name: str, addr: int,
-                      speed_pct: float, volume_ml: float | None):
-        """Log the start of a pump run."""
+    def _log_pump_run(self, pump_name: str, addr: int, speed_pct: float, volume_ml: float | None):
         if self.logger is None:
             return
-        channel = f"pump_{addr}"  # 1..7 (directly from address table)
+        channel = f"pump_{addr}"
         self.logger.log(channel, speed_pct, volume_ml=volume_ml)
 
     def _log_pump_stop(self, addr: int):
-        """Log the end of a pump run (set value to 0)."""
         if self.logger is None:
             return
         channel = f"pump_{addr}"
@@ -186,18 +237,110 @@ class PFASController:
         except Exception:
             pass
 
-    
-    # --- helpers ---
+    # --- Flow sensor shim ------------------------------------------------
+
+    def _read_flow_ml_min(self) -> float:
+        """
+        Read flow in mL/min from SLF3C. This tries common method names.
+        Edit this if your SLF3C API differs.
+        """
+        f = self.flow
+
+        # Common patterns
+        for name in ("read_flow_ml_min", "read_flow_mL_min", "flow_ml_min", "get_flow_ml_min", "read"):
+            if hasattr(f, name):
+                v = getattr(f, name)()
+                return float(v)
+
+        # Sometimes .read() returns dict
+        if hasattr(f, "read"):
+            d = f.read()
+            if isinstance(d, dict):
+                for k in ("flow_ml_min", "flow_mL_min", "flow"):
+                    if k in d:
+                        return float(d[k])
+
+        raise AttributeError("SLF3C flow driver has no recognized read method. Update _read_flow_ml_min().")
+
+    def _run_with_flow_stop(
+        self,
+        *,
+        stop_addr: int,
+        stop_fn,
+        deadline_s: float,
+        flow_zero_threshold_ml_min: float,
+        flow_zero_hold_s: float,
+        lpf_tau_s: float,
+        sample_hz: float,
+        log_prefix: str = "",
+    ) -> dict:
+        """
+        Monitor flow sensor and stop pump early if filtered flow remains below threshold
+        for flow_zero_hold_s.
+        """
+        lpf = FirstOrderLPF(tau_s=lpf_tau_s, x0=0.0)
+        period = 1.0 / max(0.5, float(sample_hz))
+        zero_start = None
+
+        t0 = time.monotonic()
+        deadline = t0 + float(deadline_s)
+        last_flow = None
+        last_flow_f = None
+
+        while True:
+            now = time.monotonic()
+            if now >= deadline:
+                break
+
+            # sample flow
+            try:
+                flow = self._read_flow_ml_min()
+            except Exception:
+                flow = float("nan")
+
+            flow_f = lpf.update(flow, t=now)
+            last_flow = flow
+            last_flow_f = flow_f
+
+            # zero detection (filtered)
+            if flow_zero_threshold_ml_min is not None and flow_zero_hold_s is not None:
+                if (flow_f == flow_f) and (flow_f <= float(flow_zero_threshold_ml_min)):  # not NaN + below thr
+                    if zero_start is None:
+                        zero_start = now
+                    elif (now - zero_start) >= float(flow_zero_hold_s):
+                        # stop early
+                        try:
+                            stop_fn(address=stop_addr)
+                        except TypeError:
+                            stop_fn(stop_addr)
+                        return {
+                            "stopped_early": True,
+                            "reason": "flow_zero",
+                            "flow_last_ml_min": last_flow,
+                            "flow_f_last_ml_min": last_flow_f,
+                            "elapsed_s": now - t0,
+                        }
+                else:
+                    zero_start = None
+
+            time.sleep(min(0.1, period))
+
+        # normal stop at deadline
+        return {
+            "stopped_early": False,
+            "reason": "deadline",
+            "flow_last_ml_min": last_flow,
+            "flow_f_last_ml_min": last_flow_f,
+            "elapsed_s": time.monotonic() - t0,
+        }
+
+    # --- helpers ---------------------------------------------------------
+
     def flow_rate_for_pump(self, pump_name: str, speed: float) -> float:
-        """
-        Estimate flow rate (mL/min) for a given pump by name using
-        individually calibrated linear relationships.
-        """
         if pump_name not in self.pump_addrs:
             raise KeyError(f"Unknown pump '{pump_name}'. Known: {list(self.pump_addrs.keys())}")
 
         addr = self.pump_addrs[pump_name]
-
         if addr == 1:
             return 0.11889 * speed - 0.03
         elif addr == 2:
@@ -206,7 +349,7 @@ class PFASController:
             return 0.11531 * speed - 0.08833
         elif addr == 4:
             return 0.19518 * speed - 0.00764
-        elif addr == 5:  # same as pump 4
+        elif addr == 5:
             return 0.19518 * speed - 0.00764
         elif addr == 6:
             return 0.17918 * speed - 0.07183
@@ -215,12 +358,7 @@ class PFASController:
         else:
             raise ValueError(f"No calibration defined for pump '{pump_name}' (addr {addr})")
 
-
-        
-    # Helper function for dosing a specific volume with a specific pump
-    def _dose(self, pump_name: str, volume_ml: float,
-              speed: float = 50.0, cw: bool = True) -> float:
-        """Run one pump long enough to deliver volume_ml (mL). Returns run time in seconds."""
+    def _dose(self, pump_name: str, volume_ml: float, speed: float = 50.0, cw: bool = True) -> float:
         if pump_name not in self.pump_addrs:
             raise ValueError(f"Unknown pump {pump_name!r}")
         flow_ml_min = self.flow_rate_for_pump(pump_name, speed)
@@ -229,29 +367,19 @@ class PFASController:
         run_s = (volume_ml / flow_ml_min) * 60.0
         addr = self.pump_addrs[pump_name]
 
-        # --- LOG START ---
-        self._log_pump_run(pump_name, addr, speed_pct=float(speed),
-                           volume_ml=float(volume_ml))
-        # --- RUN PUMP ---
+        self._log_pump_run(pump_name, addr, speed_pct=float(speed), volume_ml=float(volume_ml))
         self.pump.set_speed(speed, run=True, cw=cw, address=addr)
         time.sleep(run_s)
         self.pump.stop(address=addr)
-        # --- LOG STOP ---
         self._log_pump_stop(addr)
 
         return run_s
 
-    # Invert the flow model to get speed for a desired flow rate
     def speed_for_flow(self, pump_name: str, flow_ml_min: float) -> float:
-        """
-        Invert the per-pump linear flow model to get speed (% 0..100).
-        Uses individually calibrated relationships for each pump.
-        """
         if pump_name not in self.pump_addrs:
             raise KeyError(f"Unknown pump '{pump_name}'. Known: {list(self.pump_addrs.keys())}")
 
         addr = self.pump_addrs[pump_name]
-
         if addr == 1:
             speed = (float(flow_ml_min) + 0.03) / 0.11889
         elif addr == 2:
@@ -260,7 +388,7 @@ class PFASController:
             speed = (float(flow_ml_min) + 0.08833) / 0.11531
         elif addr == 4:
             speed = (float(flow_ml_min) + 0.00764) / 0.19518
-        elif addr == 5:  # same as pump 4
+        elif addr == 5:
             speed = (float(flow_ml_min) + 0.00764) / 0.19518
         elif addr == 6:
             speed = (float(flow_ml_min) + 0.07183) / 0.17918
@@ -467,6 +595,7 @@ class PFASController:
             raise RuntimeError("GPIO controller not initialized")
         self.gpio.off("valve1")   # to sensor
         self.gpio.on("valve2")    # not to stirrer
+        self.gpio.off("valve3")
 
         # Resolve pumps/addresses
         main_name = "holding_to_valves"   # waiting -> valves
@@ -561,7 +690,7 @@ class PFASController:
             "pump_addr_buffer": buf_addr,
             "total_to_sensor_ml_est": delivered_main_ml + delivered_buf_ml,
         }
-
+    
 
     # 4) Dispatch rest of waiting to stirrer
     def dispatch_stirrer_rest(
@@ -888,6 +1017,11 @@ class PFASController:
             raise RuntimeError("GPIO controller not initialized")
         self.gpio.off("valve1")  # not to stirrer
         self.gpio.on("valve2")   # to sensor
+        self.gpio.on("valve3")
+
+        # Wait for valves to settle
+        time.sleep(8)
+        self.gpio.off("valve3")
 
         # Resolve pump + address
         if pump_name not in self.pump_addrs:
@@ -916,6 +1050,12 @@ class PFASController:
         elapsed = time.monotonic() - t0
         flushed_ml_est = q_est * (elapsed / 60.0)
 
+        # Wait for valves to settle
+        self.gpio.off("valve3")
+        time.sleep(3)
+        self.gpio.on("valve3")
+
+
         return {
             "route": "sensor_water_flush",
             "pump": pump_name,
@@ -939,8 +1079,9 @@ class PFASController:
         buffer_ml: float | None = None,
         water_ml: float | None = None,
         volumes_ml: dict[str, float] | None = {
-            "pfas": 4.67, "c1": 4.9, "c2": 4.45, "buffer": 4.6, "water": 4.6
-        },  # e.g. {"pfas": 5.0, "c1": 4.2, "c2": 6.1, "buffer": 3.0, "water": 2.5}
+            "pfas": 6.20, "c1": 6.6, "c2": 6.6, "buffer": 8.3, "water": 8.68
+        },  # Results; 2: 7.20, 3: 7.48, 7: 7.53, 5: 8.3, 4: 8.68
+
         default_volume_ml: float = 4.9,     # used if a pump's volume isn't provided
         speed_pct: float = 99.0,
         cw: bool = True,

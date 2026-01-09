@@ -30,3 +30,22 @@ PFAS_CTRL/__init__.py
 PFAS_CTRL/__main__.py
 PFAS_CTRL/cli.py
 predictor/__init__.py
+
+# Python
+__pycache__/
+*.pyc
+
+# CasADi / JIT / compiler temp
+tmp_casadi_compiler_shell*.o
+tmp_casadi_compiler_shell*.so
+jit_tmp*.c
+jit_tmp*.o
+jit_tmp*.so
+
+# Generic build artifacts
+*.o
+*.so
+*.a
+*.out
+*.log
+*.tmp

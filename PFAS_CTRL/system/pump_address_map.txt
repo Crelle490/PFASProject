@@ -1,3 +1,5 @@
+# map between pump number and function
+
 Description,            address
 Mix to reaction chamber, 1
 PFAS,                    2

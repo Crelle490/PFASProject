@@ -212,6 +212,7 @@ class PFASController:
             )
 
     # --- logging helpers -------------------------------------------------
+    # --- logging helpers 
 
     def _log_pump_run(self, pump_name: str, addr: int, speed_pct: float, volume_ml: float | None):
         if self.logger is None:

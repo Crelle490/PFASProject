@@ -71,7 +71,7 @@ class SLF3C:
 
 
 
-    # ----- internals -----
+    #  internals 
     @staticmethod
     def _crc8_sensirion(two_bytes: list[int]) -> int:
         c = 0xFF

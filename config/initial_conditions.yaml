@@ -1,3 +1,5 @@
+# Initial conditions
+
 pH: 5.7
 c_pfas_init: 9.6e-7
 c_cl_0: 0.0

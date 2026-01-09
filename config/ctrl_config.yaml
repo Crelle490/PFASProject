@@ -1,3 +1,4 @@
+# hardware config information
 pump:
   port: "/dev/ttyUSB0"     # or /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_XXXX-if00-port0
   address: 1

@@ -8,7 +8,7 @@ from pymodbus.client import ModbusSerialClient
 from pymodbus.pdu import ExceptionResponse
 from pymodbus.exceptions import ModbusIOException
 
-# -------- register map --------
+#  register map
 IR_TEMP = 0x0001  # two words @ 0x0001..0x0002  -> °C (float32)
 IR_CONC = 0x0003  # two words @ 0x0003..0x0004  -> mg/L (float32)
 IR_MV   = 0x0007  # two words @ 0x0007..0x0008  -> mV (float32)
@@ -54,7 +54,7 @@ class FluorideAnalyzer:
         self.retry_delay = float(retry_delay)
         self._client: Optional[ModbusSerialClient] = None
 
-    # ---- lifecycle ----
+    #  lifecycle 
     def open(self) -> None:
         self._client = ModbusSerialClient(
             port=self.cfg.port,
@@ -80,7 +80,7 @@ class FluorideAnalyzer:
     def __exit__(self, exc_type, exc, tb):
         self.close()
 
-    # ---- public reads ----
+    #  public reads 
     def read_temperature_c(self) -> float:
         return self._read_float(IR_TEMP)
 
@@ -152,7 +152,7 @@ class FluorideAnalyzer:
                 "current2_mA": self.read_current2_mA(),
             }
 
-    # ---- internals ----
+    # internals 
     def _decode_float(self, hi: int, lo: int) -> float:
         if not self.big_endian_words:
             hi, lo = lo, hi

@@ -114,5 +114,3 @@ time.sleep(5)
 io.set_many({"valve1": False, "valve2": False, "fans": False})
 io.blink("valve2", period_s=0.5, cycles=2)
 io.close()
-
-"""

@@ -45,8 +45,7 @@ def make_covariances_for_fluoride_only(
     # --- Initial covariance: broad but finite belief
     P0 = np.diag((p0_frac * x_scale) ** 2)
 
-    # Report useful diagnostic
-    ratio = np.diag(Q)[-1] / R[0, 0]
+    # Report useful diagnostic    ratio = np.diag(Q)[-1] / R[0, 0]
 
     return Q, R, P0
 

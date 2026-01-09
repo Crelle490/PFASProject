@@ -44,7 +44,7 @@ class GPIOCtrl:
         self._default_value = off if init_off else None  # None => leave to caller after open()
         self.logger = logger
 
-    # --- lifecycle ---
+    #  lifecycle 
     def open(self) -> "GPIOCtrl":
         self._chip = gpiod.Chip(self.chip_path)
         cfg = gpiod.LineSettings(direction=Direction.OUTPUT)
@@ -75,7 +75,7 @@ class GPIOCtrl:
     def __exit__(self, exc_type, exc, tb):
         self.close()
 
-    # --- helpers ---
+    #  helpers 
     def _to_pin(self, which: NameOrPin) -> int:
         if isinstance(which, int):
             return which
@@ -99,7 +99,7 @@ class GPIOCtrl:
     def _OFF(self) -> Value:
         return Value.ACTIVE if self.active_low else Value.INACTIVE
 
-    # --- operations ---
+    #  operations 
     def set(self, which: NameOrPin | Iterable[NameOrPin], state: bool) -> None:
         """Set one or many outputs True/False (on/off)."""
         assert self._req, "open() first"

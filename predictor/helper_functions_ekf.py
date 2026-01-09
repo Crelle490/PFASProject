@@ -77,7 +77,6 @@ def init_EKF(
     cov_params,
     x_scale,
     *,
-    # optional robust knobs (used if your EKF supports them)
     use_adaptive_R=True,
     R_alpha=0.05,
     R_floor=0.0,

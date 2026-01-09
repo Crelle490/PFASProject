@@ -49,3 +49,14 @@ jit_tmp*.so
 *.out
 *.log
 *.tmp
+
+# Images / plots
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.pdf
+
+# Numpy / data artifacts
+*.npz
+*.npy

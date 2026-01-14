@@ -29,7 +29,15 @@ def load_constants(cfg_dir):
 
 def load_initials(cfg_dir):
     d = yaml.safe_load(open(Path(cfg_dir) / "initial_conditions.yaml", "r"))
-    return float(d["pH"]), float(d["c_cl"]), float(d["c_so3"]), float(d["c_pfas_init"])
+    c_cl = d.get("c_cl")
+    if c_cl is None:
+        c_cl = d.get("c_cl_0")
+    c_so3 = d.get("c_so3")
+    if c_so3 is None:
+        c_so3 = d.get("c_so3_0")
+    if c_cl is None or c_so3 is None:
+        raise KeyError("initial_conditions.yaml must define c_cl/c_so3 or c_cl_0/c_so3_0")
+    return float(d["pH"]), float(c_cl), float(c_so3), float(d["c_pfas_init"])
 
 def build_model_from_config(cfg_dir, trained_k_yaml, t_sim, dt=1.0):
     """

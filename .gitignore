@@ -2,6 +2,7 @@
 Models_Single_Scripts/
 models_single_script/
 Old but maybe gold/
+.venv/
 
 # Python caches and virtual environments
 __pycache__/

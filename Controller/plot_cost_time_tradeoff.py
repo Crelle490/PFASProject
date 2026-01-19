@@ -1,7 +1,7 @@
 """
-Sweep multiple (qx, qf) weight pairs and compare ΣPFAS and MPC costs.
+Plot the actuation cost (as defined in sweep_costs) when ΣPFAS first reaches 1% and 10%.
 
-Usage: python3 Controller/sweep_costs.py
+Usage: python Controller/plot_cost_time_tradeoff.py
 """
 from pathlib import Path
 import numpy as np
@@ -72,8 +72,8 @@ def run_sim(qx_val, qf_val, steps=50):
         intensity=intensity_max,
     )
     k_max = max([k1, k2, k3, k4, k5, k6, k7])
-    Ts = 30  # int(1.0 / (k_max * e_max))
-    dt_sim = Ts / 10
+    Ts = 50  # int(1.0 / (k_max * e_max))
+    dt_sim = Ts / 10.0
 
     x0_flat = initial_state.reshape(-1)
     weights = {**DEFAULT_WEIGHTS, "qx": float(qx_val), "qf": float(qf_val)}
@@ -180,91 +180,93 @@ def run_sim(qx_val, qf_val, steps=50):
 
 
 def main():
-    qx_list = [25, 50, 75, 100, 150,200]
+    qx_list = [50,75, 100, 150, 200,250]
     qf_list = [50]
-    step_arr = [17*2,14*2]
+
+    step_arr = [22,17]
 
     results = {}
-    for qx in qx_list:
+    for qx in qx_list: 
         for qf in qf_list:
-            if qx >= 100:
-                n_steps = step_arr[1]
-            else:
-                n_steps = step_arr[0]
+            n_steps = step_arr[1] if qx >= 100 else step_arr[0]
             print(f"Running qx={qx}, qf={qf} ...")
             t, X, costs, u_hist = run_sim(qx, qf, steps=n_steps)
-            results[(qx, qf)] = (t, X, costs,u_hist)
+            results[(qx, qf)] = (t, X, costs, u_hist)
 
+    # Collect cost and time at 1% and 10% of initial ΣPFAS
+    tradeoff_points = {0.01: [], 0.10: []}
+    for (qx, qf), (t, X, costs, _) in results.items():
+        Z = np.sum(X[:, :7], axis=1)
+        initial_conc = Z[0]
+        for target_frac in (0.01, 0.10):
+            target_conc = target_frac * initial_conc
+            indices_below_target = np.where(Z <= target_conc)[0]
+            if len(indices_below_target) > 0:
+                step_to_target = indices_below_target[0]
+                time_to_target = t[step_to_target]
+                total_cost = costs[step_to_target]*0.13  # cost value to use at the target step
+                tradeoff_points[target_frac].append((time_to_target, total_cost))
+                print(
+                    f"{target_frac*100:.0f}% -> reaches at step {step_to_target}, "
+                    f"time {time_to_target:.2f}s, total cost {total_cost:.4e}"
+                )
+            else:
+                print(f"{target_frac*100:.0f}% -> not reached within simulation.")
+
+    # Plot cost at target vs time to target (connect points for indication)
     plt.style.use(["science", "grid"])
     plt.rcParams.update(
-    {
-        "legend.loc": "1",
-        "font.family": "serif",
-    }
-)
+        {
+            "legend.loc": "best",
+            "legend.frameon": False,
+            "font.family": "serif",
+            "font.size": 11,
+            "axes.labelsize": 12,
+            "axes.titlesize": 13,
+            "xtick.labelsize": 10,
+            "ytick.labelsize": 10,
+            "axes.linewidth": 1.1,
+            "grid.linestyle": ":",
+            "grid.alpha": 0.45,
+            "text.usetex": False,
+        }
+    )
 
-    fig, axes = plt.subplots(2, 1, figsize=(9, 9), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(8, 6), constrained_layout=True)
+    markers = {0.01: "o", 0.10: "s"}
+    colors = {0.01: "#2b6cb0", 0.10: "#c05621"}
+    for target_frac, points in tradeoff_points.items():
+        if not points:
+            continue
+        # sort by time to connect points sensibly
+        points_sorted = sorted(points, key=lambda p: p[0])
+        times = [p[0] for p in points_sorted]
+        costs_at_target = [p[1] for p in points_sorted]
+        ax.plot(
+            times,
+            costs_at_target,
+            marker=markers.get(target_frac, "o"),
+            linestyle="-",
+            linewidth=2.0,
+            markersize=6.5,
+            color=colors.get(target_frac, None),
+            label=f"{int(target_frac*100)}% ΣPFAS",
+        )
 
-    # Plot ΣPFAS over time
-    ax0 = axes[0]
-    i = 0
-    for (qx, qf), (t, X, _, _) in results.items():
-        i += 1
-        Z = np.sum(X[:, :7], axis=1)
-        if i == 1:
-            ax0.hlines(Z[0]*0.1, xmin=t[0]-1000, xmax=t[-1]+1000, colors='k', linestyles='dashed', label='$10\%$ remaning')
-            ax0.hlines(Z[0]*0.01, xmin=t[0]-1000, xmax=t[-1]+1000, colors='k', linestyles='dashed', label='$1\%$ remaning')
-            ax0.set_xlim(t[0], t[-1])
-        
-        ax0.plot(t, Z, label=f"qx={qx}")
-    ax0.set_xlabel("Time [s]")
-    ax0.set_ylabel("$\sum$ PFAS [M]")
-    ax0.set_title("$\sum$ PFAS vs time for different parameter weights")
-    ax0.grid(True)
-    ax0.legend(fancybox=False, edgecolor="black")
+    ax.set_xlabel("Time to target ΣPFAS [s]")
+    ax.set_ylabel("Actuation cost at target [EUR/mol] (414.05g PFOA)")
+    ax.set_title("Cost vs time at 1% and 10% ΣPFAS")
+    ax.grid(True, which="both")
+    ax.minorticks_on()
+    ax.tick_params(direction="in", length=4, width=1.1)
+    ax.tick_params(axis="both", which="minor", length=2.5, width=1.0)
+    ax.legend()
 
-
-    # Plot actuation-only costs per step
-    ax1 = axes[1]
-    i = 0
-    for (qx, qf), (t, _, costs,_) in results.items():
-        ax1.plot(t[0:-1], costs, label=f"qx={qx}")
-        i +=1
-        if i == 1:
-            ax1.set_xlim(t[0], t[-1])
-    ax1.set_xlabel("Time [s]")
-    ax1.set_ylabel("Cost [DKK/mol] (414.05g PFOA)")
-    ax1.set_title("Actuation-only cost")
-    ax1.grid(True)
-    ax1.legend(fancybox=False, edgecolor="black")
-
-    out_path = Path(__file__).resolve().parent.parent / "results" / "sweep_costs.png"
+    out_path = Path(__file__).resolve().parent.parent / "results" / "cost_vs_time_total_cost.png"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150)
-    print(f"Saved figure to {out_path}")
+    print(f"Saved plot to {out_path}")
     plt.show()
-
-    # Per-actuation subplots (SO3, Cl, pH, Intensity)
-    fig_act, axes_act = plt.subplots(4, 1, figsize=(9, 10), sharex=True, constrained_layout=True)
-    labels = ["SO3 [M]", "Cl [M]", "pH [-]", "Intensity [-]"]
-    for idx, ax in enumerate(axes_act):
-        for (qx, qf), (t, X, _, u_hist) in results.items():
-            # u_hist shape: (steps, 4)
-            ax.plot(t[:-1], u_hist[:, idx], label=f"qx={qx}" if idx == 0 else None)
-        ax.set_ylabel(labels[idx])
-        ax.grid(True)
-        if idx == 0:
-            ax.set_title("Inputs vs time for different qx")
-    axes_act[-1].set_xlabel("Time [s]")
-    axes_act[0].legend(fancybox=False, edgecolor="black")
-    # intensity axis (last subplot) limited to [0, 1]
-    axes_act[-1].set_ylim(0.0, 1.1)
-    out_path_act = Path(__file__).resolve().parent.parent /"results" / "sweep_costs_inputs.png"
-    plt.savefig(out_path_act, dpi=150)
-    print(f"Saved input figure to {out_path_act}")
-    plt.show()
-    
-    
-
 
 
 if __name__ == "__main__":

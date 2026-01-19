@@ -9,11 +9,11 @@ process_noise_covariance:
   - [0, 0, 0, 0, 0, 0, 0, 7.22e-14]
 
 measurement_noise_covariance:
-  - [4e-18]
+  - [1e-16]
 
 initial_error_covariance:
   # 11x11 matrix, rows as lists of values
-  - [1.0e-11,    0,    0,    0,    0,    0,    0,    0]
+  - [1.0e-12,    0,    0,    0,    0,    0,    0,    0]
   - [0,    1.0e-11,    0,    0,    0,    0,    0,    0]
   - [0,    0,    1.0e-11,    0,    0,    0,    0,    0]
   - [0,    0,    0,    1.0e-11,    0,    0,    0,    0]

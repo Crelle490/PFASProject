@@ -41,6 +41,8 @@ class RungeKuttaIntegratorCell(Layer):
 
         # Trainable parameters in log10-space.
         self._log_k_init = np.log10([k1, k2, k3, k4, k5, k6, k7])
+        # Tensor versions for graph math
+        self.initial_state_tf = tf.convert_to_tensor(self.initial_state, dtype=tf.float32)
 
     def build(self, input_shape):
         k_names = ['k1','k2','k3','k4','k5','k6','k7']
@@ -55,18 +57,19 @@ class RungeKuttaIntegratorCell(Layer):
     def call(self, inputs, states):
         # Convert log parameters to actual values.
         params = {name: 10.0 ** log_v for name, log_v in self.log_k_values.items()}
-        y = states[0]  # shape: (batch, 8)
+        y = tf.convert_to_tensor(states[0], dtype=tf.float32)  # shape: (batch, 8)
 
-        # update catalyst based on input
-        self.c_cl = float(inputs[0])
-        self.c_so3 = float(inputs[1])
+        inputs = tf.convert_to_tensor(inputs, dtype=tf.float32)
+        # Pad to length >=4 to avoid out-of-bounds in graph tracing when optional inputs are absent.
+        pad_len = tf.maximum(0, 4 - tf.shape(inputs)[0])
+        inputs = tf.concat([inputs, tf.zeros((pad_len,), dtype=inputs.dtype)], axis=0)
 
-        if len(inputs) > 2:
-            # Optionally update pH and light intensity from inputs
-            self.pH = float(inputs[2])
-            self.intensity = float(inputs[3])
-            self.I0_185 = self.constants["I0_185"] * self.intensity
-            self.I0_254 = self.constants["I0_254"] * self.intensity
+        self.c_cl = inputs[0]
+        self.c_so3 = inputs[1]
+        self.pH = inputs[2]
+        self.intensity = inputs[3]
+        self.I0_185 = self.constants["I0_185"] * self.intensity
+        self.I0_254 = self.constants["I0_254"] * self.intensity
 
         # RK4 increments
         k1 = self._fun(y, params) * self.dt
@@ -91,12 +94,12 @@ class RungeKuttaIntegratorCell(Layer):
         numerator = self.generation_of_eaq()
 
         # Additional kinetic constants
-        k_so3_eaq = 1.5e6
-        k_cl_eaq  = 1.0e6
-        beta_j    = 2.57e4
+        k_so3_eaq = tf.constant(1.5e6, dtype=tf.float32)
+        k_cl_eaq  = tf.constant(1.0e6, dtype=tf.float32)
+        beta_j    = tf.constant(2.57e4, dtype=tf.float32)
 
         # Use initial PFAS concentration from dummy initial state (first species)
-        c_pfas_init = float(self.initial_state[0, 0])
+        c_pfas_init = self.initial_state_tf[0, 0]
         denominator = params['k1'] * c_pfas_init + beta_j + k_so3_eaq * self.c_so3 + k_cl_eaq * self.c_cl
         c_eaq = numerator / denominator  # scalar
 
@@ -120,9 +123,9 @@ class RungeKuttaIntegratorCell(Layer):
         Returns a scalar (float).
         """
         p = self.constants
-        c_pfas_init = float(self.initial_state[0, 0])
+        c_pfas_init = self.initial_state_tf[0, 0]
         # [OH-] from pH
-        c_oh_m = np.power(10.0, -14.0 + self.pH)
+        c_oh_m = tf.pow(tf.constant(10.0, dtype=tf.float32), tf.constant(-14.0, dtype=tf.float32) + self.pH)
 
         # Total absorption @185 nm
         Sigma_f_185 = (p["epsilon_h2o_185"] * p["c_h2o"] +
@@ -146,13 +149,13 @@ class RungeKuttaIntegratorCell(Layer):
         f_so3_254 = (p["epsilon_so3_254"] * self.c_so3) / Sigma_f_254
 
         # Contributions @185
-        term_h2o_185 = f_h2o_185 * p["phi_h2o_185"] * (1.0 - np.power(10.0, -p["epsilon_h2o_185"] * p["l"] * p["c_h2o"]))
-        term_oh_m_185 = f_oh_m_185 * p["phi_oh_m_185"] * (1.0 - np.power(10.0, -p["epsilon_oh_m_185"] * p["l"] * c_oh_m))
-        term_cl_185   = f_cl_185   * p["phi_cl_185"]   * (1.0 - np.power(10.0, -p["epsilon_cl_185"]   * p["l"] * self.c_cl))
-        term_so3_185  = f_so3_185  * p["phi_so3_185"]  * (1.0 - np.power(10.0, -p["epsilon_so3_185"]  * p["l"] * self.c_so3))
+        term_h2o_185 = f_h2o_185 * p["phi_h2o_185"] * (1.0 - tf.pow(tf.constant(10.0, dtype=tf.float32), -p["epsilon_h2o_185"] * p["l"] * p["c_h2o"]))
+        term_oh_m_185 = f_oh_m_185 * p["phi_oh_m_185"] * (1.0 - tf.pow(tf.constant(10.0, dtype=tf.float32), -p["epsilon_oh_m_185"] * p["l"] * c_oh_m))
+        term_cl_185   = f_cl_185   * p["phi_cl_185"]   * (1.0 - tf.pow(tf.constant(10.0, dtype=tf.float32), -p["epsilon_cl_185"]   * p["l"] * self.c_cl))
+        term_so3_185  = f_so3_185  * p["phi_so3_185"]  * (1.0 - tf.pow(tf.constant(10.0, dtype=tf.float32), -p["epsilon_so3_185"]  * p["l"] * self.c_so3))
         numerator_185 = self.I0_185 * (term_h2o_185 + term_oh_m_185 + term_cl_185 + term_so3_185)
 
         # Contribution @254
-        numerator_254 = self.I0_254 * f_so3_254 * p["phi_so3_254"] * (1.0 - np.power(10.0, -p["epsilon_so3_254"] * p["l"] * self.c_so3))
+        numerator_254 = self.I0_254 * f_so3_254 * p["phi_so3_254"] * (1.0 - tf.pow(tf.constant(10.0, dtype=tf.float32), -p["epsilon_so3_254"] * p["l"] * self.c_so3))
 
-        return float(numerator_185 + numerator_254)
+        return numerator_185 + numerator_254

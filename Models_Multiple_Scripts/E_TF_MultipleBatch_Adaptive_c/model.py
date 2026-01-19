@@ -28,9 +28,11 @@ def create_model(k1, k2, k3, k4, k5, k6, k7,
         else:
             dummy_initial_state = np.asarray(initial_states[:1], dtype=np.float32)
 
+        intensity = 1.0  # default intensity for prediction
+
         rk_cell = RungeKuttaIntegratorCell(
             k1, k2, k3, k4, k5, k6, k7,
-            constants, c_cl, c_so3, pH, dt_sim,
+            constants, c_cl, c_so3, pH, intensity, dt_sim,
             dummy_initial_state, for_prediction=for_prediction
         )
 

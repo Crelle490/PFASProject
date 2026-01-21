@@ -41,8 +41,9 @@ class RungeKuttaIntegratorCell(Layer):
         y = states[0]  # shape: (batch, 8)
 
         # update catalyst based on input
-        self.c_cl = float(inputs[0])
-        self.c_so3 = float(inputs[1])
+        #if inputs is list: # This is a problematic way on giving the inputs, but changing may brake other code.
+        #    self.c_cl = float(inputs[0])
+        #    self.c_so3 = float(inputs[1])
 
         # RK4 increments
         k1 = self._fun(y, params) * self.dt

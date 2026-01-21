@@ -343,7 +343,7 @@ class PFASController:
 
         addr = self.pump_addrs[pump_name]
         if addr == 1:
-            return 0.11889 * speed - 0.03
+            return 0.8699598 * speed − 2.1795366
         elif addr == 2:
             return 0.10591 * speed - 0.0156
         elif addr == 3:

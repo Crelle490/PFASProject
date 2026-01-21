@@ -150,7 +150,8 @@ ctrl = PFASController(
         default_single_shot_s=10,
     )
 )
-
+ctrl._dose(pump_name = "mix_to_reaction", volume_ml=20, speed = 50.0, cw = True)
+"""
 substeps = round(Ts / dt_sim)
 print("Substeps per control interval:", substeps)
 ctx_adi = build_mpc_adi(
@@ -179,7 +180,7 @@ ekf = init_EKF(
     )
 ekf.use_adaptive_R = False
 print(f"[ekf-init] id={id(ekf)} use_adaptive_R={ekf.use_adaptive_R} R_floor={ekf.R_floor}")
-
+"""
 """
 # --- STEP 1: fill five resvior tubes -----
 print("Step 1: Filling tubes...") 
@@ -287,14 +288,15 @@ while xk_sum > eps:
         pred=None,                  # optional
         meta={"k": k, "Ts": Ts},
     )
-"""
 
+"""
+"""
 # --- STEP 0: Final flush -----
 print("Final flush...")
 #ctrl.exit_fluid(volume_ml=10, speed_pct=99.0)
 
 ctrl.empty_tubes(volume_ml=30, speed_pct=50)
-
+"""
 """
 # Sensors (manual open/close)
 if ctrl.ph:

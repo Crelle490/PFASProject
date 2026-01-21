@@ -106,6 +106,11 @@ class WX10Pump:
         - broadcast=True sends to addr 31 (no response).
         """
         addr = self._resolve_addr(address, broadcast)
+        if addr == 1:
+            if cw == True:
+                cw = False
+            else:
+                cw = True
         rpm10 = max(0, min(int(round(rpm * 10)), 1000))  # clamp 0..100 rpm
         pdu = bytearray()
         pdu += b"WJ"  # 0x57 0x4A

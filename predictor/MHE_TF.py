@@ -25,6 +25,9 @@ import matplotlib.pyplot as plt
 from scipy.optimize import least_squares
 from collections import deque
 import pandas as pd
+import tensorflow_probability as tfp
+import json
+from datetime import datetime
 
 # -----------------------------
 # Project import setup
@@ -48,6 +51,7 @@ class MovingHorizonEstimator:
         self,
         n: int,
         sampling_period: int,
+        verbose: int = 2,
         horizon: int = 10,
         Q_diag: float | np.ndarray = 3.69e-16,
         R_rel: float = 1e-4,
@@ -64,7 +68,7 @@ class MovingHorizonEstimator:
             np.zeros((1, self.n_simulation_steps, 1), dtype=np.float32),
             dtype=tf.float32
         )
-
+        self.verbose = int(verbose)
         self.n = int(n)
         self.N = int(horizon)
 
@@ -91,18 +95,106 @@ class MovingHorizonEstimator:
 
     def _pack(self, X: np.ndarray) -> np.ndarray:
         return X.reshape(-1)
-
-    def _pack_M(self, X: np.ndarray) -> np.ndarray:
-        return X.reshape(-1)
-
-    def _unpack_M(self, z: np.ndarray, M: int) -> np.ndarray:
-        # M intervals => M+1 states
-        return z.reshape(M + 1, self.n)
     
+    @tf.function
+    def _softplus_pos(self, z_u, eps=1e-12):
+        return tf.nn.softplus(z_u) + tf.cast(eps, z_u.dtype)
+
+    @tf.function
+    def _unpack_M_tf(self, z, M):
+        # z shape: ((M+1)*n,)
+        return tf.reshape(z, (M + 1, self.n))
+
+    @tf.function
+    def _h_tf(self, X):
+        # X: (M+1, n) -> y_hat: (M+1,)
+        # measurement is last state component
+        return X[:, -1]
+    
+    @tf.function
+    def _f_batch_tf(self, X0_batch, time_starts, time_ends):
+        """
+        TF version of f_batch:
+          X0_batch: (B, 8) float32
+          time_starts/time_ends: (B,) float32
+          returns: (B, 8) float32
+        """
+        B = tf.shape(X0_batch)[0]
+        dummy = tf.zeros((B, self.n_simulation_steps, 1), dtype=tf.float32)
+
+        # model returns (B, T, 8)
+        x_series = self.model([dummy, X0_batch], training=False)
+
+        # prepend x0: (B, T+1, 8)
+        x_full = tf.concat([X0_batch[:, None, :], x_series], axis=1)
+
+        dt = tf.cast(time_ends - time_starts, tf.float32)
+        idx = tf.cast(tf.round(dt / tf.constant(DT, tf.float32)), tf.int32)
+        idx = tf.clip_by_value(idx, 0, tf.shape(x_full)[1] - 1)
+
+        # gather x_full[b, idx[b], :]
+        b_idx = tf.range(B, dtype=tf.int32)
+        gather_idx = tf.stack([b_idx, idx], axis=1)  # (B,2)
+        X_plus = tf.gather_nd(x_full, gather_idx)    # (B,8)
+
+        return X_plus
+    
+    @tf.function
+    def _residuals_M_tf(self, z_u, M, y_buf_tf, t_buf_tf):
+        """
+        Build residual vector r(z) with TF ops.
+        Inputs:
+          z_u: unconstrained decision vector ( (M+1)*n, )
+          M: python int or tf int
+          y_buf_tf: (M+1,) float32  [latest window]
+          t_buf_tf: (M+1,) float32  [latest window]
+        Returns:
+          r: (n + M*n + (M+1),) float32  (arrival + dyn + meas)
+        """
+        # positivity constraint
+        z = self._softplus_pos(z_u, eps=self.eps_y)
+
+        X = self._unpack_M_tf(z, M)  # (M+1, n)
+
+        # arrival
+        x_prior_tf = tf.convert_to_tensor(self.x_prior, tf.float32)
+        P0_tf      = tf.convert_to_tensor(self.P0, tf.float32)
+        r_arr = (X[0] - x_prior_tf) / tf.sqrt(P0_tf)  # (n,)
+
+        # dynamics
+        if M > 0:
+            time_starts = t_buf_tf[:-1]
+            time_ends   = t_buf_tf[1:]
+            X0_batch    = X[:-1]  # (M,n)
+
+            X_next_hat = self._f_batch_tf(tf.cast(X0_batch, tf.float32),
+                                          tf.cast(time_starts, tf.float32),
+                                          tf.cast(time_ends, tf.float32))  # (M,n)
+
+            Q_tf = tf.convert_to_tensor(self.Q, tf.float32)
+            r_dyn = (X[1:] - X_next_hat) / tf.sqrt(Q_tf)   # (M,n)
+            r_dyn = tf.reshape(r_dyn, (-1,))              # (M*n,)
+        else:
+            r_dyn = tf.zeros((0,), tf.float32)
+
+        # measurement residuals
+        y_hat = self._h_tf(X)  # (M+1,)
+
+        if self.use_log_measurement:
+            y_safe    = tf.maximum(y_buf_tf, tf.cast(self.eps_y, tf.float32))
+            yhat_safe = tf.maximum(y_hat,    tf.cast(self.eps_y, tf.float32))
+            r_meas = (tf.math.log(y_safe) - tf.math.log(yhat_safe)) / tf.cast(self.R_rel, tf.float32)
+        else:
+            sigma = tf.cast(self.R_rel, tf.float32) * tf.maximum(tf.abs(y_buf_tf), tf.cast(self.eps_y, tf.float32))
+            r_meas = (y_buf_tf - y_hat) / sigma
+
+        # concat
+        return tf.concat([tf.cast(r_arr, tf.float32), tf.cast(r_dyn, tf.float32), tf.cast(r_meas, tf.float32)], axis=0)
+
     def _initial_guess_M(self, M: int) -> np.ndarray:
         if self._x_seq_last is None:
             X0 = np.tile(self.x_prior, (M + 1, 1))
-            return self._pack_M(X0)
+            return self._pack(X0)
 
         X_prev = self._x_seq_last  # shape (prev_M+1, n)
         prev_M = X_prev.shape[0] - 1
@@ -120,7 +212,7 @@ class MovingHorizonEstimator:
             pad = np.tile(X_shift[-1:], (M + 1 - X_shift.shape[0], 1))
             X0 = np.vstack([X_shift, pad])
 
-        return self._pack_M(X0)
+        return self._pack(X0)
 
 
     def _initial_guess(self) -> np.ndarray:
@@ -131,55 +223,6 @@ class MovingHorizonEstimator:
         X0 = np.vstack([X_prev[1:], X_prev[-1:]])  # shift warm-start
         return self._pack(X0)
 
-    def residuals_M(self, z, M):
-        X = self._unpack_M(z, M)  # (M+1, n)
-
-        self._res_call_count += 1
-        debug = (self._res_call_count % 50 == 1)  # every 50 calls
-
-        if debug:
-            print(f"[RES] call {self._res_call_count}")
-            print("  X[0] min/max:", X[0].min(), X[0].max())
-
-        # Arrival cost
-        r_arr = (X[0] - self.x_prior) / np.sqrt(self.P0)
-
-        # Dynamics residuals (only if we have at least one interval)
-        if M >= 1:
-            t = np.asarray(list(self.t_buf), dtype=float)[-(M + 1):]
-            time_starts = t[:-1]
-            time_ends = t[1:]
-
-            X0_batch = X[:M, :]  # (M, n)
-            X_next_hat = self.f_batch(X0_batch, time_starts, time_ends)  # (M, n)
-
-            r_dyn = (X[1:M+1] - X_next_hat) / np.sqrt(self.Q)
-            r_dyn = r_dyn.reshape(-1)
-        else:
-            r_dyn = np.zeros((0,), dtype=float)
-
-        # Measurement residuals (M+1 of them)
-        r_meas = []
-        for i in range(M + 1):
-            y_i = float(self.y_buf[i])
-            y_hat = float(self.h(X[i]))
-
-            if self.use_log_measurement:
-                y_safe = max(y_i, self.eps_y)
-                yhat_safe = max(y_hat, self.eps_y)
-                r = (np.log(y_safe) - np.log(yhat_safe)) / self.R_rel
-            else:
-                sigma = self.R_rel * max(abs(y_i), self.eps_y)
-                r = (y_i - y_hat) / sigma
-
-            r_meas.append(r)
-        if debug:
-            print("  r_dyn norm:", np.linalg.norm(r_dyn))
-            print("  r_meas norm:", np.linalg.norm(r_meas))
-
-        r_meas = np.asarray(r_meas, dtype=float).reshape(-1)
-
-        return np.concatenate([r_arr, r_dyn, r_meas])
 
 
     def _residuals(self, z: np.ndarray) -> np.ndarray:
@@ -230,78 +273,76 @@ class MovingHorizonEstimator:
             print("  r_meas norm:", np.linalg.norm(r_meas))
 
         return np.concatenate([r_arr, r_dyn, r_meas])
+    
+    def log(self, level: int, *msg):
+        if self.verbose >= level:
+            print(*msg, flush=True)
+
 
     def update(self, y_new: float, t_new: float, u_new: float | None = None) -> dict:
-        print(
-            f"[UPDATE] t={t_new:.2f}, y={y_new:.3e}, "
-            f"buffers: y={len(self.y_buf)}/{self.N+1}, "
-            f"u={len(self.u_buf)}/{self.N}, "
-            f"t={len(self.t_buf)}/{self.N+1}"
-        )
-
+        self.log(1, f"[UPDATE] t={t_new:.2f}, y={y_new:.3e}, "
+            f"len(y)={len(self.y_buf)+1}/{self.N+1}, len(t)={len(self.t_buf)+1}/{self.N+1}")
         self.y_buf.append(float(y_new))
         self.t_buf.append(float(t_new))
         if u_new is not None:
             self.u_buf.append(float(u_new))
 
-        # Need at least one measurement+timestamp
         if len(self.y_buf) < 1 or len(self.t_buf) < 1:
-            print("[UPDATE] Buffering only – solver not called yet")
-            return {"ready": False, "message": "Buffering... need at least one (y,t)."}
+            return {"ready": False, "message": "Need at least one (y,t)."}
 
-        # Number of intervals available in the current buffer
-        # (M=0 => only x0, measurement-only fit; M>=1 adds dynamics residuals)
         M = len(self.y_buf) - 1
-        if M < 0:
-            return {"ready": False, "message": "No measurements yet."}
+        # window arrays (use the most recent M+1 values)
+        y_win = np.asarray(list(self.y_buf), dtype=np.float32)[-(M+1):]
+        t_win = np.asarray(list(self.t_buf), dtype=np.float32)[-(M+1):]
 
-        # Initial guess for current M
-        z0 = self._initial_guess_M(M)
+        y_buf_tf = tf.convert_to_tensor(y_win, dtype=tf.float32)
+        t_buf_tf = tf.convert_to_tensor(t_win, dtype=tf.float32)
 
-        if self.enforce_nonneg:
-            lb = np.zeros_like(z0)
-            ub = np.full_like(z0, np.inf)
-        else:
-            lb = np.full_like(z0, -np.inf)
-            ub = np.full_like(z0, np.inf)
+        # initial guess z0 (positive); convert to unconstrained by inverse-softplus-ish
+        z0 = self._initial_guess_M(M).astype(np.float32)
+        # map positive z0 -> z0_u so softplus(z0_u) ~ z0
+        z0_u = np.log(np.expm1(np.maximum(z0, 1e-12))).astype(np.float32)
 
-        # Closure so least_squares only sees fun(z)
-        def fun(z):
-            return self.residuals_M(z, M)
+        z_u = tf.Variable(z0_u, dtype=tf.float32)
 
-        print("\n[MHE] Solving...")
-        print("  M:", M, "(intervals), states:", M + 1)
-        print("  Initial guess norm:", np.linalg.norm(z0))
-        print("  z0 shape:", z0.shape)
+        # objective: 0.5 * ||r||^2
+        def value_and_gradients_fn(z_u_flat):
+            with tf.GradientTape() as tape:
+                tape.watch(z_u_flat)
+                r = self._residuals_M_tf(z_u_flat, M, y_buf_tf, t_buf_tf)
+                loss = 0.5 * tf.reduce_sum(tf.square(r))
+            g = tape.gradient(loss, z_u_flat)
+            return loss, g
+        self.log(2, f"[SOLVE] M={M}, vars={(M+1)*self.n}, "
+            f"t_win={t_win[0]:.2f}->{t_win[-1]:.2f}, "
+            f"dt_last={(t_win[-1]-t_win[-2]) if len(t_win)>1 else 0:.2f}")
+        self.log(2, f"[SOLVE] z0 min/max {z0.min():.3e}/{z0.max():.3e}")
 
-        res = least_squares(
-            fun=fun,
-            x0=z0,
-            bounds=(lb, ub),
-            method="trf",
-            max_nfev=self.max_nfev
+        results = tfp.optimizer.lbfgs_minimize(
+            value_and_gradients_function=value_and_gradients_fn,
+            initial_position=tf.convert_to_tensor(z_u),
+            max_iterations=self.max_nfev,
+            tolerance=1e-12
         )
 
-        print("[MHE] Done")
-        print("  success:", res.success)
-        print("  status:", res.status)
-        print("  cost:", res.cost)
-        print("  nfev:", res.nfev)
 
-        X_hat = self._unpack_M(res.x, M)
+        z_u_opt = results.position
+        z_opt   = (tf.nn.softplus(z_u_opt) + tf.cast(self.eps_y, tf.float32)).numpy()
+        X_hat   = z_opt.reshape(M + 1, self.n).astype(float)
+
         self._x_seq_last = X_hat
-
-        # IMPORTANT: carry the *current* state as prior for next update
         self.x_prior = X_hat[-1].copy()
 
         return {
             "ready": True,
-            "success": bool(res.success),
-            "cost": float(res.cost),
-            "nfev": int(res.nfev),
+            "success": bool(results.converged.numpy()),
+            "status": int(results.num_iterations.numpy()),
+            "cost": float(results.objective_value.numpy()),
+            "nfev": int(results.num_iterations.numpy()),
             "x_current": X_hat[-1].copy(),
-            "X_sequence": X_hat
+            "X_sequence": X_hat,
         }
+
 
 
     def HPINN_model(self, n_simulation_steps: int):
@@ -318,39 +359,6 @@ class MovingHorizonEstimator:
             initial_states=np.zeros((1, 8), dtype=np.float32)
         )
         return model
-
-    def f_batch(self, X0_batch, time_starts, measurement_times):
-        """
-        X0_batch: (B, 8)
-        time_starts, measurement_times: (B,)
-        Returns X_plus_batch: (B, 8)
-        """
-        X0_batch = np.asarray(X0_batch, dtype=np.float32)
-        if X0_batch.ndim != 2 or X0_batch.shape[1] != 8:
-            raise ValueError("X0_batch must be (B, 8)")
-
-        # Tile dummy input to batch size
-        B = X0_batch.shape[0]
-        dummy = tf.zeros((B, self.n_simulation_steps, 1), dtype=tf.float32)
-        X0_tf = tf.convert_to_tensor(X0_batch, dtype=tf.float32)
-
-        # One forward call (avoid model.predict overhead if possible; see section 2)
-        x_series = self.model([dummy, X0_tf], training=False).numpy()  # (B, T, 8)
-
-        x_full = np.concatenate([X0_batch[:, None, :], x_series], axis=1)  # (B, T+1, 8)
-
-        dt = (np.asarray(measurement_times) - np.asarray(time_starts)).astype(np.float32)
-        idx = np.rint(dt / DT).astype(int)
-        idx = np.clip(idx, 0, x_full.shape[1] - 1)
-
-        # Gather per-batch index
-        X_plus = x_full[np.arange(B), idx, :]
-        return X_plus
-
-
-    def h(self, x):
-        # Measurement model: use last state as measurement (your placeholder)
-        return float(x[-1])
 
 
 # -----------------------------
@@ -440,7 +448,7 @@ def load_batch_data(csv_path: Path, sequence_id: int):
 if __name__ == "__main__":
     # We set n=8 in this demo, because your HPINN state is 8D and your h(x)=x[-1].
     n = 8
-
+    print(tf.config.list_physical_devices("GPU"))
     # Choose a sampling_period that covers the largest expected gap between timestamps
     # Here we generate mean ~10s but can have larger; set to 200s to be safe.
     sampling_period = 650
@@ -509,7 +517,7 @@ if __name__ == "__main__":
             x_hat = out["x_current"]
             x_est_list.append(x_hat)
             t_est_list.append(t_k)
-            y_hat_list.append(mhe.h(x_hat))
+            y_hat_list.append(float(x_hat[-1]))
             updates.append(out)
 
     
@@ -587,13 +595,13 @@ if __name__ == "__main__":
         # Model prediction (dense)
         ax.plot(t_model, X_model[:, i], "-", linewidth=1.8, label="HPINN model (open-loop)")
 
-        # Real measured data points (only where available; NaNs won't plot)
-        ax.plot(t_meas, X_data[:, i], "o", markersize=4, label="Data points")
-
 
         # MHE estimates (only after ready)
         if X_mhe.shape[0] > 0:
             ax.plot(t_est, X_mhe[:, i], "s-", markersize=4, linewidth=1.2, label="MHE estimate")
+
+        # Real measured data points (only where available; NaNs won't plot)
+        ax.plot(t_meas, X_data[:, i], "o", markersize=4, label="Data points")
 
         ax.set_ylabel(state_labels[i])
         ax.grid(True)
@@ -607,3 +615,68 @@ if __name__ == "__main__":
     fig.suptitle("Full state trajectory: HPINN model vs MHE vs data", y=0.995)
     fig.tight_layout(rect=[0, 0, 1, 0.98])
     plt.show()
+
+    results_dir = PROJECT_ROOT / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_name = f"mhe_tf_seq{SEQUENCE_ID}_N{horizon}_dt{DT:g}_sp{sampling_period}_{stamp}"
+
+    # --------------------------------------------------
+    # Save figure to /results
+    # --------------------------------------------------
+    fig_path_png = results_dir / f"{run_name}.png"
+    fig_path_pdf = results_dir / f"{run_name}.pdf"
+
+    fig.savefig(fig_path_png, dpi=200, bbox_inches="tight")
+    fig.savefig(fig_path_pdf, bbox_inches="tight")
+
+    print(f"[SAVE] Figure written:\n  {fig_path_png}\n  {fig_path_pdf}", flush=True)
+
+
+    npz_path = results_dir / f"{run_name}.npz"
+    json_path = results_dir / f"{run_name}.json"
+
+    # Save arrays (everything needed to replot)
+    np.savez_compressed(
+        npz_path,
+        # raw measurements
+        t_meas=t_meas,
+        Y_meas=Y_meas,
+        y_meas=y_meas,
+        X_data=X_data,
+
+        # MHE results
+        t_est=t_est,
+        X_mhe=X_mhe,
+        y_hat=np.asarray(y_hat_list, dtype=float),
+
+        # HPINN open-loop rollout used for plotting
+        t_model=t_model,
+        X_model=X_model,
+
+        # initial condition and mapping info
+        x0=np.asarray(x0, dtype=float),
+        idx_map=np.asarray(idx_map, dtype=int),
+    )
+
+    # Save metadata (human-readable)
+    meta = {
+        "sequence_id": int(SEQUENCE_ID),
+        "horizon": int(horizon),
+        "DT": float(DT),
+        "sampling_period": float(sampling_period),
+        "n": int(n),
+        "Q_diag": float(3.69e-16),  # or store your actual Q/P/R if you want
+        "R_rel": float(1e-4),
+        "P0_diag": float(1.0),
+        "use_log_measurement": True,
+        "enforce_nonneg": True,
+        "created": stamp,
+        "npz_file": npz_path.name,
+    }
+
+    with open(json_path, "w") as f:
+        json.dump(meta, f, indent=2)
+
+    print(f"[SAVE] Wrote:\n  {npz_path}\n  {json_path}", flush=True)

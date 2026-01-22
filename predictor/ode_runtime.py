@@ -39,7 +39,7 @@ def load_initials(cfg_dir):
         raise KeyError("initial_conditions.yaml must define c_cl/c_so3 or c_cl_0/c_so3_0")
     return float(d["pH"]), float(c_cl), float(c_so3), float(d["c_pfas_init"])
 
-def build_model_from_config(cfg_dir, trained_k_yaml, t_sim, dt=1.0):
+def build_model_from_config(cfg_dir, trained_k_yaml, t_sim, dt=1.0,initial_states=None):
     """
     cfg_dir: folder with physichal_paramters.yaml and initial_conditions.yaml
     trained_k_yaml: path to trained_params.yaml (with k1..k7)
@@ -51,9 +51,12 @@ def build_model_from_config(cfg_dir, trained_k_yaml, t_sim, dt=1.0):
 
     t_sim = np.asarray(t_sim, dtype=np.float32)
     t_pinn_list = [t_sim]
-    t_true_list = [t_sim[:1]]              
-    initial_states = np.zeros((1, 8), np.float32)
-    initial_states[0, 0] = np.float32(c_pfas_init)
+    t_true_list = [t_sim[:1]]
+    if initial_states is None:              
+        initial_states = np.zeros((1, 8), np.float32)
+        initial_states[0, 0] = np.float32(c_pfas_init)
+    else:
+        initial_states = np.asarray(initial_states, dtype=np.float32)
     dummy = np.zeros((1, t_sim.size, 1), np.float32)
 
     model = create_model(*k, constants, c_cl, c_so3, pH, dt,

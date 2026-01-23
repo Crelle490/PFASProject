@@ -27,8 +27,11 @@ def load_trained_k(path):
 def load_constants(cfg_dir):
     return yaml.safe_load(open(Path(cfg_dir) / "physichal_paramters.yaml", "r"))
 
-def load_initials(cfg_dir):
-    d = yaml.safe_load(open(Path(cfg_dir) / "initial_conditions.yaml", "r"))
+def load_initials(cfg_dir,initial_file):
+    if initial_file is not None:
+        d = yaml.safe_load(open(Path(cfg_dir) / initial_file, "r"))
+    else:
+        d = yaml.safe_load(open(Path(cfg_dir) / "initial_conditions.yaml", "r"))
     c_cl = d.get("c_cl")
     if c_cl is None:
         c_cl = d.get("c_cl_0")
@@ -39,14 +42,14 @@ def load_initials(cfg_dir):
         raise KeyError("initial_conditions.yaml must define c_cl/c_so3 or c_cl_0/c_so3_0")
     return float(d["pH"]), float(c_cl), float(c_so3), float(d["c_pfas_init"])
 
-def build_model_from_config(cfg_dir, trained_k_yaml, t_sim, dt=1.0,initial_states=None):
+def build_model_from_config(cfg_dir, trained_k_yaml, t_sim, dt=1.0,initial_states=None,initial_file=None):
     """
     cfg_dir: folder with physichal_paramters.yaml and initial_conditions.yaml
     trained_k_yaml: path to trained_params.yaml (with k1..k7)
     t_sim: 1D array of times (e.g., np.arange(0, 601, 1, dtype=np.float32))
     """
     constants = load_constants(cfg_dir)
-    pH, c_cl, c_so3, c_pfas_init = load_initials(cfg_dir)
+    pH, c_cl, c_so3, c_pfas_init = load_initials(cfg_dir,initial_file)
     k = load_trained_k(trained_k_yaml)
 
     t_sim = np.asarray(t_sim, dtype=np.float32)

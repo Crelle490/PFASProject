@@ -22,7 +22,6 @@ from pathlib import Path
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
-from scipy.optimize import least_squares
 from collections import deque
 import pandas as pd
 import tensorflow_probability as tfp
@@ -171,9 +170,14 @@ class MovingHorizonEstimator:
                                           tf.cast(time_starts, tf.float32),
                                           tf.cast(time_ends, tf.float32))  # (M,n)
 
-            Q_tf = tf.convert_to_tensor(self.Q, tf.float32)
-            r_dyn = (X[1:] - X_next_hat) / tf.sqrt(Q_tf)   # (M,n)
-            r_dyn = tf.reshape(r_dyn, (-1,))              # (M*n,)
+            #dt = t_buf_tf[1:] - t_buf_tf[:-1]              # (M,)
+            #dt = tf.maximum(dt, tf.cast(1e-9, tf.float32)) # avoid divide-by-zero / negative
+
+            Q_tf = tf.convert_to_tensor(self.Q, tf.float32)          # (n,)
+            scale = tf.sqrt(Q_tf[None, :])             # (M,n)
+
+            r_dyn = (X[1:] - X_next_hat) / scale                     # (M,n)
+            r_dyn = tf.reshape(r_dyn, (-1,))                         # (M*n,)
         else:
             r_dyn = tf.zeros((0,), tf.float32)
 
@@ -455,14 +459,25 @@ if __name__ == "__main__":
 
     # Horizon in number of measurements (N)
     horizon = 3
-
+    #Q_diag = np.array([3.69e-16, 1.58e-16, 8.76e-18, 1.25e-18,
+    #               3.51e-18, 3.32e-18, 8.08e-18, 7.22e-14], float)
+    Q_diag = np.array([
+        3.8e-16,  # x1 = C7
+        3.8e-16,  # x2 = unmeasured (loose-ish)
+        1.0e-17,  # x3 = C5
+        1.0e-17,  # x4 = unmeasured (loose-ish)
+        3.7e-18,  # x5 = C3
+        3.1e-18,  # x6 = C2
+        6.4e-18,  # x7 = CF3
+        8.7e-14,  # x8 = F-
+    ], dtype=float)*1e-6
     mhe = MovingHorizonEstimator(
         n=n,
         sampling_period=sampling_period,
         horizon=horizon,
-        Q_diag=3.69e-16,
-        R_rel=1e-4,
-        P0_diag=1.0,
+        Q_diag=Q_diag,
+        R_rel=1e-2,
+        P0_diag=1e-16,
         enforce_nonneg=True,
         use_log_measurement=True,
         max_nfev=200

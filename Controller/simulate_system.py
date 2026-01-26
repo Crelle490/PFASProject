@@ -72,6 +72,8 @@ cl_max = c_cl*0.1
 so3_max = c_so3*0.1
 u_max   = [so3_max, cl_max]
 
+print(u_max)
+
 # Determine sampling time (loop time) Ts
 e_max = estimate_e(params, c_so3=so3_max, c_cl=cl_max, pH=pH, c_pfas_init=init_vals["c_pfas_init"], k1=k1)
 k_max = max([k1, k2, k3, k4, k5, k6, k7])

@@ -11,9 +11,9 @@ from casadi_mpc import (
 )
 
 DEFAULT_WEIGHTS = {
-    "qx": 2, # state horizon weight
-    "qf": 12,  # qf = N * qx terminal weight
-    "R":  np.array([1, (1)/4.71232876712]),   # Actuator weights [so3, cl] 
+    "qx": 25, # state horizon weight
+    "qf": 50,  # qf = N * qx terminal weight
+    "R":  np.array([69.3, 14.6]),   # Actuator weights [so3, cl] 
     "Rd": np.array([0.0, 0.0]),  # not used 
     "eps": 1e-10,  # not used 
     "taus": np.array([0.50, 0.3, 0.25, 0.2, 0.1, 0.05, 0.02]), # thresholds for PFAS species # not used 

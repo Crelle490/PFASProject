@@ -1,5 +1,5 @@
 """
-demo_mhe_hpinn.py
+MHE_TF.py
 
 Demo script showing how to run the timestamped MHE that uses an HPINN rollout
 to build one-step predictions x_{i+1}^hat = f(x_i, u_i, t_i, t_{i+1}).
@@ -58,7 +58,8 @@ class MovingHorizonEstimator:
         enforce_nonneg: bool = True,
         use_log_measurement: bool = True,
         eps_y: float = 1e-12,
-        max_nfev: int = 300
+        max_nfev: int = 300,
+        alpha_y: float = 1.0
     ):
         self.n_simulation_steps = int(sampling_period / DT) + 1
         self.model = self.HPINN_model(n_simulation_steps=self.n_simulation_steps)
@@ -79,6 +80,8 @@ class MovingHorizonEstimator:
         self.use_log_measurement = bool(use_log_measurement)
         self.eps_y = float(eps_y)
         self.max_nfev = int(max_nfev)
+        self.alpha_y = float(alpha_y)
+
 
         self.y_buf = deque(maxlen=self.N + 1)
         self.u_buf = deque(maxlen=self.N)
@@ -88,6 +91,7 @@ class MovingHorizonEstimator:
         self.x_prior = np.ones(self.n) * 1e-6
 
         self._res_call_count = 0
+        
 
     def set_prior(self, x_prior: np.ndarray):
         self.x_prior = np.array(x_prior, dtype=float).reshape(self.n)
@@ -108,7 +112,8 @@ class MovingHorizonEstimator:
     def _h_tf(self, X):
         # X: (M+1, n) -> y_hat: (M+1,)
         # measurement is last state component
-        return X[:, -1]
+        return tf.cast(self.alpha_y, X.dtype) * X[:, -1]
+
     
     @tf.function
     def _f_batch_tf(self, X0_batch, time_starts, time_ends):
@@ -120,7 +125,6 @@ class MovingHorizonEstimator:
         """
         B = tf.shape(X0_batch)[0]
         dummy = tf.zeros((B, self.n_simulation_steps, 1), dtype=tf.float32)
-
         # model returns (B, T, 8)
         x_series = self.model([dummy, X0_batch], training=False)
 
@@ -130,6 +134,7 @@ class MovingHorizonEstimator:
         dt = tf.cast(time_ends - time_starts, tf.float32)
         idx = tf.cast(tf.round(dt / tf.constant(DT, tf.float32)), tf.int32)
         idx = tf.clip_by_value(idx, 0, tf.shape(x_full)[1] - 1)
+
 
         # gather x_full[b, idx[b], :]
         b_idx = tf.range(B, dtype=tf.int32)
@@ -170,6 +175,8 @@ class MovingHorizonEstimator:
                                           tf.cast(time_starts, tf.float32),
                                           tf.cast(time_ends, tf.float32))  # (M,n)
 
+
+
             #dt = t_buf_tf[1:] - t_buf_tf[:-1]              # (M,)
             #dt = tf.maximum(dt, tf.cast(1e-9, tf.float32)) # avoid divide-by-zero / negative
 
@@ -191,7 +198,7 @@ class MovingHorizonEstimator:
         else:
             sigma = tf.cast(self.R_rel, tf.float32) * tf.maximum(tf.abs(y_buf_tf), tf.cast(self.eps_y, tf.float32))
             r_meas = (y_buf_tf - y_hat) / sigma
-
+        #tf.print("meas y/yhat:", y_buf_tf, y_hat)
         # concat
         return tf.concat([tf.cast(r_arr, tf.float32), tf.cast(r_dyn, tf.float32), tf.cast(r_meas, tf.float32)], axis=0)
 
@@ -248,7 +255,7 @@ class MovingHorizonEstimator:
 
         X0_batch    = X[:self.N, :]  # (N, 8)
 
-        X_next_hat = self.f_batch(X0_batch, time_starts, time_ends)  # (N, 8)
+        X_next_hat = self._f_batch_tf(X0_batch, time_starts, time_ends)  # (N, 8)
 
         # r_dyn uses X_next_hat[i] for each i
         r_dyn = (X[1:self.N+1] - X_next_hat) / np.sqrt(self.Q)
@@ -286,6 +293,13 @@ class MovingHorizonEstimator:
     def update(self, y_new: float, t_new: float, u_new: float | None = None) -> dict:
         self.log(1, f"[UPDATE] t={t_new:.2f}, y={y_new:.3e}, "
             f"len(y)={len(self.y_buf)+1}/{self.N+1}, len(t)={len(self.t_buf)+1}/{self.N+1}")
+        y_new = float(y_new)
+        t_new = float(t_new)
+
+        # If using log residuals, do NOT allow non-positive measurements
+        if self.use_log_measurement:
+            y_new = max(y_new, self.eps_y)
+
         self.y_buf.append(float(y_new))
         self.t_buf.append(float(t_new))
         if u_new is not None:
@@ -402,7 +416,7 @@ def simulate_truth_with_hpinn(mhe: MovingHorizonEstimator, x0: np.ndarray, times
         t_prev = float(times[k - 1])
         t_now  = float(times[k])
 
-        X_next = mhe.f_batch(
+        X_next = mhe._f_batch_tf(
             X0_batch=xk,                             # (1,8)
             time_starts=np.array([t_prev], float),    # (1,)
             measurement_times=np.array([t_now], float) # (1,)
@@ -480,7 +494,8 @@ if __name__ == "__main__":
         P0_diag=1e-16,
         enforce_nonneg=True,
         use_log_measurement=True,
-        max_nfev=200
+        max_nfev=200,
+        alpha_y=5.0,
     )
 
     # --------------------------------------------------

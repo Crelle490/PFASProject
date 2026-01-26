@@ -24,6 +24,7 @@ class RungeKuttaIntegratorCell(Layer):
 
         # Trainable parameters in log10-space.
         self._log_k_init = np.log10([k1, k2, k3, k4, k5, k6, k7])
+        self.c_pfas_init = 9.074690e-07
 
     def build(self, input_shape):
         k_names = ['k1','k2','k3','k4','k5','k6','k7']
@@ -72,8 +73,8 @@ class RungeKuttaIntegratorCell(Layer):
         beta_j    = 2.57e4
 
         # Use initial PFAS concentration from dummy initial state (first species)
-        c_pfas_init = float(self.initial_state[0, 0])
-        denominator = params['k1'] * c_pfas_init + beta_j + k_so3_eaq * self.c_so3 + k_cl_eaq * self.c_cl
+        self.c_pfas_init = float(self.initial_state[0, 0])
+        denominator = params['k1'] * self.c_pfas_init + beta_j + k_so3_eaq * self.c_so3 + k_cl_eaq * self.c_cl
         c_eaq = numerator / denominator  # scalar
 
         # Reaction rates (first-order in PFAS and c_eaq)
@@ -96,7 +97,7 @@ class RungeKuttaIntegratorCell(Layer):
         Returns a scalar (float).
         """
         p = self.constants
-        c_pfas_init = float(self.initial_state[0, 0])
+        c_pfas_init = self.c_pfas_init
         
         # [OH-] from pH
         c_oh_m = np.power(10.0, -14.0 + self.pH)

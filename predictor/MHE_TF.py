@@ -104,11 +104,6 @@ class MovingHorizonEstimator:
         return tf.nn.softplus(z_u) + tf.cast(eps, z_u.dtype)
 
     @tf.function
-    def _unpack_M_tf(self, z, M):
-        # z shape: ((M+1)*n,)
-        return tf.reshape(z, (M + 1, self.n))
-
-    @tf.function
     def _h_tf(self, X):
         # X: (M+1, n) -> y_hat: (M+1,)
         # measurement is last state component
@@ -142,53 +137,51 @@ class MovingHorizonEstimator:
         X_plus = tf.gather_nd(x_full, gather_idx)    # (B,8)
 
         return X_plus
+    @tf.function
+    def _rollout_window_tf(self, x0, t_buf_tf):
+        """
+        Roll out states at the measurement times in t_buf_tf using the HPINN jump model.
+        x0: (n,) or (1,n)
+        t_buf_tf: (M+1,)
+        returns X: (M+1, n)
+        """
+        xk = tf.reshape(x0, (1, self.n))  # (1,n)
+        M = tf.shape(t_buf_tf)[0] - 1
+
+        X_list = [xk[0]]  # list of (n,)
+
+        # loop over intervals
+        for k in tf.range(M):
+            t0 = t_buf_tf[k:k+1]     # (1,)
+            t1 = t_buf_tf[k+1:k+2]   # (1,)
+            xk = self._f_batch_tf(xk, t0, t1)  # (1,n)
+            X_list.append(xk[0])
+
+        return tf.stack(X_list, axis=0)  # (M+1,n)
     
     @tf.function
     def _residuals_M_tf(self, z_u, M, y_buf_tf, t_buf_tf):
         """
-        Build residual vector r(z) with TF ops.
-        Inputs:
-          z_u: unconstrained decision vector ( (M+1)*n, )
-          M: python int or tf int
-          y_buf_tf: (M+1,) float32  [latest window]
-          t_buf_tf: (M+1,) float32  [latest window]
-        Returns:
-          r: (n + M*n + (M+1),) float32  (arrival + dyn + meas)
+        Single-shooting residual:
+        - Decision variable: x0 only (n,)
+        - Rollout X_k via physics (HPINN)
+        - Residuals: arrival + measurement (+ optional monotonic penalties)
         """
-        # positivity constraint
-        z = self._softplus_pos(z_u, eps=self.eps_y)
+        # keep optimizer in a reasonable range
+        z_u = tf.clip_by_value(z_u, -50.0, 50.0)
 
-        X = self._unpack_M_tf(z, M)  # (M+1, n)
+        # positivity on initial state
+        x0 = self._softplus_pos(z_u, eps=self.eps_y)  # (n,)
 
-        # arrival
+        # rollout physics to all times in window
+        X = self._rollout_window_tf(x0, t_buf_tf)     # (M+1,n)
+
+        # arrival prior on initial state
         x_prior_tf = tf.convert_to_tensor(self.x_prior, tf.float32)
         P0_tf      = tf.convert_to_tensor(self.P0, tf.float32)
         r_arr = (X[0] - x_prior_tf) / tf.sqrt(P0_tf)  # (n,)
 
-        # dynamics
-        if M > 0:
-            time_starts = t_buf_tf[:-1]
-            time_ends   = t_buf_tf[1:]
-            X0_batch    = X[:-1]  # (M,n)
-
-            X_next_hat = self._f_batch_tf(tf.cast(X0_batch, tf.float32),
-                                          tf.cast(time_starts, tf.float32),
-                                          tf.cast(time_ends, tf.float32))  # (M,n)
-
-
-
-            #dt = t_buf_tf[1:] - t_buf_tf[:-1]              # (M,)
-            #dt = tf.maximum(dt, tf.cast(1e-9, tf.float32)) # avoid divide-by-zero / negative
-
-            Q_tf = tf.convert_to_tensor(self.Q, tf.float32)          # (n,)
-            scale = tf.sqrt(Q_tf[None, :])             # (M,n)
-
-            r_dyn = (X[1:] - X_next_hat) / scale                     # (M,n)
-            r_dyn = tf.reshape(r_dyn, (-1,))                         # (M*n,)
-        else:
-            r_dyn = tf.zeros((0,), tf.float32)
-
-        # measurement residuals
+        # measurement residuals (fluoride only)
         y_hat = self._h_tf(X)  # (M+1,)
 
         if self.use_log_measurement:
@@ -198,9 +191,25 @@ class MovingHorizonEstimator:
         else:
             sigma = tf.cast(self.R_rel, tf.float32) * tf.maximum(tf.abs(y_buf_tf), tf.cast(self.eps_y, tf.float32))
             r_meas = (y_buf_tf - y_hat) / sigma
-        #tf.print("meas y/yhat:", y_buf_tf, y_hat)
-        # concat
-        return tf.concat([tf.cast(r_arr, tf.float32), tf.cast(r_dyn, tf.float32), tf.cast(r_meas, tf.float32)], axis=0)
+
+        # OPTIONAL: soft physical penalties (safe + cheap)
+        # fluoride should be non-decreasing
+        F = X[:, 7]
+        sigma_Fmono = tf.cast(1e-10, tf.float32)  # tune
+        r_Fmono = tf.nn.relu(F[:-1] - F[1:]) / sigma_Fmono  # (M,)
+
+        # total PFAS sum should be non-increasing: sum_{1..7} decreases
+        S = tf.reduce_sum(X[:, :7], axis=1)
+        sigma_Smono = tf.cast(1e-10, tf.float32)  # tune
+        r_Smono = tf.nn.relu(S[1:] - S[:-1]) / sigma_Smono  # (M,)
+
+        return tf.concat([
+            tf.cast(r_arr, tf.float32),
+            tf.cast(r_meas, tf.float32),
+            tf.cast(r_Fmono, tf.float32),
+            tf.cast(r_Smono, tf.float32),
+        ], axis=0)
+
 
     def _initial_guess_M(self, M: int) -> np.ndarray:
         if self._x_seq_last is None:

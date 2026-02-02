@@ -4,10 +4,11 @@ from pathlib import Path
 import numpy as np
 import tensorflow as tf
 import yaml
+import matplotlib.pyplot as plt   # <-- add
 
 
 # --- Hardcoded simulation/optimization settings ---
-DT = 1.0
+DT = 10.0
 T_FINAL = 600.0
 PFAS_THRESHOLD = 1e-9
 THRESHOLD_SMOOTHING = 1e-9
@@ -15,7 +16,7 @@ W_TIME = 1.0
 W_SO3 = 1.0
 SO3_MIN = 0.0
 SO3_MAX = 0.05
-OPT_STEPS = 10
+OPT_STEPS = 50
 LEARNING_RATE = 1e-2
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -23,7 +24,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from Models_Multiple_Scripts.D_TF_MutipleBatch_Fixed_c.model import create_model
-
 
 
 def load_trained_k(path):
@@ -87,6 +87,12 @@ def main():
     best_cost = None
     best_c_so3 = None
 
+    # ---- add history buffers ----
+    steps_hist = []
+    cost_hist = []
+    time_above_hist = []
+    cso3_hist = []
+
     print(f"Optimizing c_so3 in [{SO3_MIN}, {SO3_MAX}] for {OPT_STEPS} steps...")
     for step in range(OPT_STEPS):
         with tf.GradientTape() as tape:
@@ -102,18 +108,48 @@ def main():
 
         cost_val = float(cost.numpy())
         c_so3_val = float(c_so3.numpy())
+        time_above_val = float(time_above.numpy())
+
+        # ---- store history ----
+        steps_hist.append(step)
+        cost_hist.append(cost_val)
+        time_above_hist.append(time_above_val)
+        cso3_hist.append(c_so3_val)
+
         if best_cost is None or cost_val < best_cost:
             best_cost = cost_val
             best_c_so3 = c_so3_val
 
-        if step % 1 == 0 or step == OPT_STEPS - 1:
-            time_above_val = float(time_above.numpy())
-            print(
-                f"step={step:04d} cost={cost_val:.6e} "
-                f"time_above={time_above_val:.6e} c_so3={c_so3_val:.6e}"
-            )
+        print(
+            f"step={step:04d} cost={cost_val:.6e} "
+            f"time_above={time_above_val:.6e} c_so3={c_so3_val:.6e}"
+        )
 
     print(f"best_c_so3={best_c_so3:.6e} best_cost={best_cost:.6e}")
+
+    # ---- plot learning curves ----
+    plt.figure()
+    plt.plot(steps_hist, cost_hist, marker="o")
+    plt.xlabel("Optimization step")
+    plt.ylabel("Cost")
+    plt.grid(True)
+    plt.tight_layout()
+
+    plt.figure()
+    plt.plot(steps_hist, time_above_hist, marker="o")
+    plt.xlabel("Optimization step")
+    plt.ylabel("Time above PFAS threshold [s]")
+    plt.grid(True)
+    plt.tight_layout()
+
+    plt.figure()
+    plt.plot(steps_hist, cso3_hist, marker="o")
+    plt.xlabel("Optimization step")
+    plt.ylabel("c_so3 [M]")
+    plt.grid(True)
+    plt.tight_layout()
+
+    plt.show()
 
 
 if __name__ == "__main__":

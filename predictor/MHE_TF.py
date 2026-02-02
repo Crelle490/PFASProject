@@ -137,27 +137,39 @@ class MovingHorizonEstimator:
         X_plus = tf.gather_nd(x_full, gather_idx)    # (B,8)
 
         return X_plus
+    
     @tf.function
     def _rollout_window_tf(self, x0, t_buf_tf):
         """
         Roll out states at the measurement times in t_buf_tf using the HPINN jump model.
+        Uses TensorArray to be autograph-safe.
+
         x0: (n,) or (1,n)
         t_buf_tf: (M+1,)
         returns X: (M+1, n)
         """
         xk = tf.reshape(x0, (1, self.n))  # (1,n)
-        M = tf.shape(t_buf_tf)[0] - 1
+        M = tf.shape(t_buf_tf)[0] - 1     # number of intervals
 
-        X_list = [xk[0]]  # list of (n,)
+        ta = tf.TensorArray(dtype=tf.float32, size=M + 1, element_shape=(self.n,))
+        ta = ta.write(0, tf.cast(xk[0], tf.float32))
 
-        # loop over intervals
-        for k in tf.range(M):
-            t0 = t_buf_tf[k:k+1]     # (1,)
-            t1 = t_buf_tf[k+1:k+2]   # (1,)
-            xk = self._f_batch_tf(xk, t0, t1)  # (1,n)
-            X_list.append(xk[0])
+        def body(k, xk, ta):
+            t0 = t_buf_tf[k:k+1]       # (1,)
+            t1 = t_buf_tf[k+1:k+2]     # (1,)
+            xk1 = self._f_batch_tf(tf.cast(xk, tf.float32), tf.cast(t0, tf.float32), tf.cast(t1, tf.float32))  # (1,n)
+            ta = ta.write(k + 1, xk1[0])
+            return k + 1, xk1, ta
 
-        return tf.stack(X_list, axis=0)  # (M+1,n)
+        def cond(k, xk, ta):
+            return k < M
+
+        k0 = tf.constant(0, dtype=tf.int32)
+        _, _, ta = tf.while_loop(cond, body, loop_vars=[k0, xk, ta], parallel_iterations=1)
+
+        X = ta.stack()  # (M+1,n)
+        return X
+
     
     @tf.function
     def _residuals_M_tf(self, z_u, M, y_buf_tf, t_buf_tf):
@@ -168,13 +180,10 @@ class MovingHorizonEstimator:
         - Residuals: arrival + measurement (+ optional monotonic penalties)
         """
         # keep optimizer in a reasonable range
-        z_u = tf.clip_by_value(z_u, -50.0, 50.0)
+        z_u = tf.clip_by_value(z_u, -5.0, 5.0)
 
-        # positivity on initial state
-        x0 = self._softplus_pos(z_u, eps=self.eps_y)  # (n,)
-
-        # rollout physics to all times in window
-        X = self._rollout_window_tf(x0, t_buf_tf)     # (M+1,n)
+        x0 = tf.cast(self._softplus_pos(z_u, eps=self.eps_y), tf.float32)  # (n,)
+        X  = self._rollout_window_tf(x0, t_buf_tf)
 
         # arrival prior on initial state
         x_prior_tf = tf.convert_to_tensor(self.x_prior, tf.float32)
@@ -325,14 +334,12 @@ class MovingHorizonEstimator:
         y_buf_tf = tf.convert_to_tensor(y_win, dtype=tf.float32)
         t_buf_tf = tf.convert_to_tensor(t_win, dtype=tf.float32)
 
-        # initial guess z0 (positive); convert to unconstrained by inverse-softplus-ish
-        z0 = self._initial_guess_M(M).astype(np.float32)
-        # map positive z0 -> z0_u so softplus(z0_u) ~ z0
+        # ---- single shooting: decision variable is x0 only ----
+        z0 = self.x_prior.astype(np.float32).reshape(self.n)  # (n,)
         z0_u = np.log(np.expm1(np.maximum(z0, 1e-12))).astype(np.float32)
-
         z_u = tf.Variable(z0_u, dtype=tf.float32)
 
-        # objective: 0.5 * ||r||^2
+
         def value_and_gradients_fn(z_u_flat):
             with tf.GradientTape() as tape:
                 tape.watch(z_u_flat)
@@ -340,10 +347,11 @@ class MovingHorizonEstimator:
                 loss = 0.5 * tf.reduce_sum(tf.square(r))
             g = tape.gradient(loss, z_u_flat)
             return loss, g
-        self.log(2, f"[SOLVE] M={M}, vars={(M+1)*self.n}, "
+
+        self.log(2, f"[SOLVE] M={M}, vars={self.n}, "
             f"t_win={t_win[0]:.2f}->{t_win[-1]:.2f}, "
             f"dt_last={(t_win[-1]-t_win[-2]) if len(t_win)>1 else 0:.2f}")
-        self.log(2, f"[SOLVE] z0 min/max {z0.min():.3e}/{z0.max():.3e}")
+        self.log(2, f"[SOLVE] x0 prior min/max {z0.min():.3e}/{z0.max():.3e}")
 
         results = tfp.optimizer.lbfgs_minimize(
             value_and_gradients_function=value_and_gradients_fn,
@@ -352,13 +360,14 @@ class MovingHorizonEstimator:
             tolerance=1e-12
         )
 
-
         z_u_opt = results.position
-        z_opt   = (tf.nn.softplus(z_u_opt) + tf.cast(self.eps_y, tf.float32)).numpy()
-        X_hat   = z_opt.reshape(M + 1, self.n).astype(float)
+        x0_opt = (tf.nn.softplus(z_u_opt) + tf.cast(self.eps_y, tf.float32)).numpy().astype(float)  # (n,)
+
+        # rollout full window at optimum to return a consistent trajectory
+        X_hat = self._rollout_window_tf(tf.convert_to_tensor(x0_opt, tf.float32), t_buf_tf).numpy().astype(float)  # (M+1,n)
 
         self._x_seq_last = X_hat
-        self.x_prior = X_hat[-1].copy()
+        self.x_prior = X_hat[-1].copy()  # keep "current state" prior for next step
 
         return {
             "ready": True,
@@ -504,7 +513,7 @@ if __name__ == "__main__":
         enforce_nonneg=True,
         use_log_measurement=True,
         max_nfev=200,
-        alpha_y=5.0,
+        alpha_y=1.0,
     )
 
     # --------------------------------------------------
@@ -556,7 +565,7 @@ if __name__ == "__main__":
             x_hat = out["x_current"]
             x_est_list.append(x_hat)
             t_est_list.append(t_k)
-            y_hat_list.append(float(x_hat[-1]))
+            y_hat_list.append(float(mhe.alpha_y * x_hat[-1]))
             updates.append(out)
 
     

@@ -22,7 +22,7 @@ import time
 
 
 # -- Pump Test -- doesnt work with single address!!!
-ser = serial.Serial("/dev/ttyUSB0", 9600, bytesize=8,
+ser = serial.Serial("/dev/ttyUSB1", 9600, bytesize=8,
                     parity=serial.PARITY_EVEN, stopbits=1, timeout=0.5)
 
 gpio = GPIOCtrl(active_low=False).open()
@@ -47,7 +47,7 @@ gpio = GPIOCtrl(active_low=False).open()
 gpio.on("valve3")
 pump   = WX10Pump(port=ser, address=31)
 pump.set_speed(50, cw=False)  # ensure stopped
-time.sleep(30)
+time.sleep(1)
 pump.stop()
 
 

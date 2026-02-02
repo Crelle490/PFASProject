@@ -20,13 +20,22 @@ class RungeKuttaIntegratorCell(Layer):
         self.state_size = 8
 
         self.constants = constants
-        self.c_cl = float(c_cl)
-        self.c_so3 = float(c_so3)
-        self.pH = float(pH)
+        self.c_cl = self._as_tensor(c_cl)
+        self.c_so3 = self._as_tensor(c_so3)
+        self.pH = self._as_tensor(pH)
         self.for_prediction = bool(for_prediction)
 
         # Trainable parameters in log10-space.
         self._log_k_init = np.log10([k1, k2, k3, k4, k5, k6, k7])
+
+    @staticmethod
+    def _as_tensor(value):
+        if isinstance(value, (tf.Tensor, tf.Variable)):
+            return tf.cast(value, tf.float32)
+        return tf.constant(value, dtype=tf.float32)
+
+    def _const(self, key):
+        return tf.constant(self.constants[key], dtype=tf.float32)
 
     def build(self, input_shape):
         k_names = ['k1','k2','k3','k4','k5','k6','k7']
@@ -67,13 +76,18 @@ class RungeKuttaIntegratorCell(Layer):
         numerator = self.generation_of_eaq()
 
         # Additional kinetic constants
-        k_so3_eaq = 1.5e6
-        k_cl_eaq  = 1.0e6
-        beta_j    = 2.57e4
+        k_so3_eaq = tf.constant(1.5e6, dtype=tf.float32)
+        k_cl_eaq = tf.constant(1.0e6, dtype=tf.float32)
+        beta_j = tf.constant(2.57e4, dtype=tf.float32)
 
         # Use initial PFAS concentration from *dummy* initial state (first species)
-        c_pfas_init = float(self.initial_state[0, 0])
-        denominator = params['k1'] * c_pfas_init + beta_j + k_so3_eaq * self.c_so3 + k_cl_eaq * self.c_cl
+        c_pfas_init = tf.constant(float(self.initial_state[0, 0]), dtype=tf.float32)
+        denominator = (
+            params['k1'] * c_pfas_init
+            + beta_j
+            + k_so3_eaq * self.c_so3
+            + k_cl_eaq * self.c_cl
+        )
         c_eaq = numerator / denominator  # scalar
 
         # Reaction rates (first-order in PFAS and c_eaq)
@@ -95,43 +109,56 @@ class RungeKuttaIntegratorCell(Layer):
         Compute the generation rate of hydrated electrons (e_aq⁻) from 185/254 nm absorption.
         Returns a scalar (float).
         """
-        p = self.constants
-        c_pfas_init = float(self.initial_state[0, 0])
+        c_pfas_init = tf.constant(float(self.initial_state[0, 0]), dtype=tf.float32)
         # [OH-] from pH
-        c_oh_m = np.power(10.0, -14.0 + self.pH)
+        c_oh_m = tf.pow(10.0, -14.0 + self.pH)
 
         # Total absorption @185 nm
-        Sigma_f_185 = (p["epsilon_h2o_185"] * p["c_h2o"] +
-                       p["epsilon_oh_m_185"] * c_oh_m +
-                       p["epsilon_cl_185"]   * self.c_cl +
-                       p["epsilon_so3_185"]  * self.c_so3 +
-                       p["epsilon_pfas_185"] * c_pfas_init)
+        Sigma_f_185 = (
+            self._const("epsilon_h2o_185") * self._const("c_h2o")
+            + self._const("epsilon_oh_m_185") * c_oh_m
+            + self._const("epsilon_cl_185") * self.c_cl
+            + self._const("epsilon_so3_185") * self.c_so3
+            + self._const("epsilon_pfas_185") * c_pfas_init
+        )
 
         # Total absorption @254 nm
-        Sigma_f_254 = (p["epsilon_h2o_254"] * p["c_h2o"] +
-                       p["epsilon_so3_254"]  * self.c_so3 +
-                       p["epsilon_pfas_254"] * c_pfas_init)
+        Sigma_f_254 = (
+            self._const("epsilon_h2o_254") * self._const("c_h2o")
+            + self._const("epsilon_so3_254") * self.c_so3
+            + self._const("epsilon_pfas_254") * c_pfas_init
+        )
 
         # Fractions @185
-        f_h2o_185 = (p["epsilon_h2o_185"] * p["c_h2o"]) / Sigma_f_185
-        f_oh_m_185 = (p["epsilon_oh_m_185"] * c_oh_m) / Sigma_f_185
-        f_cl_185   = (p["epsilon_cl_185"]   * self.c_cl) / Sigma_f_185
-        f_so3_185  = (p["epsilon_so3_185"]  * self.c_so3) / Sigma_f_185
+        f_h2o_185 = (self._const("epsilon_h2o_185") * self._const("c_h2o")) / Sigma_f_185
+        f_oh_m_185 = (self._const("epsilon_oh_m_185") * c_oh_m) / Sigma_f_185
+        f_cl_185 = (self._const("epsilon_cl_185") * self.c_cl) / Sigma_f_185
+        f_so3_185 = (self._const("epsilon_so3_185") * self.c_so3) / Sigma_f_185
 
         # Fraction @254
-        f_so3_254 = (p["epsilon_so3_254"] * self.c_so3) / Sigma_f_254
+        f_so3_254 = (self._const("epsilon_so3_254") * self.c_so3) / Sigma_f_254
 
         # Contributions @185
-        term_h2o_185 = f_h2o_185 * p["phi_h2o_185"] * (1.0 - np.power(10.0, -p["epsilon_h2o_185"] * p["l"] * p["c_h2o"]))
-        term_oh_m_185 = f_oh_m_185 * p["phi_oh_m_185"] * (1.0 - np.power(10.0, -p["epsilon_oh_m_185"] * p["l"] * c_oh_m))
-        term_cl_185   = f_cl_185   * p["phi_cl_185"]   * (1.0 - np.power(10.0, -p["epsilon_cl_185"]   * p["l"] * self.c_cl))
-        term_so3_185  = f_so3_185  * p["phi_so3_185"]  * (1.0 - np.power(10.0, -p["epsilon_so3_185"]  * p["l"] * self.c_so3))
-        numerator_185 = p["I0_185"] * (term_h2o_185 + term_oh_m_185 + term_cl_185 + term_so3_185)
+        term_h2o_185 = f_h2o_185 * self._const("phi_h2o_185") * (
+            1.0 - tf.pow(10.0, -self._const("epsilon_h2o_185") * self._const("l") * self._const("c_h2o"))
+        )
+        term_oh_m_185 = f_oh_m_185 * self._const("phi_oh_m_185") * (
+            1.0 - tf.pow(10.0, -self._const("epsilon_oh_m_185") * self._const("l") * c_oh_m)
+        )
+        term_cl_185 = f_cl_185 * self._const("phi_cl_185") * (
+            1.0 - tf.pow(10.0, -self._const("epsilon_cl_185") * self._const("l") * self.c_cl)
+        )
+        term_so3_185 = f_so3_185 * self._const("phi_so3_185") * (
+            1.0 - tf.pow(10.0, -self._const("epsilon_so3_185") * self._const("l") * self.c_so3)
+        )
+        numerator_185 = self._const("I0_185") * (term_h2o_185 + term_oh_m_185 + term_cl_185 + term_so3_185)
 
         # Contribution @254
-        numerator_254 = p["I0_254"] * f_so3_254 * p["phi_so3_254"] * (1.0 - np.power(10.0, -p["epsilon_so3_254"] * p["l"] * self.c_so3))
+        numerator_254 = self._const("I0_254") * f_so3_254 * self._const("phi_so3_254") * (
+            1.0 - tf.pow(10.0, -self._const("epsilon_so3_254") * self._const("l") * self.c_so3)
+        )
 
-        return float(numerator_185 + numerator_254)
+        return numerator_185 + numerator_254
 
 def interpolate_predictions(t_pinn, t_true, y_pred):
     """

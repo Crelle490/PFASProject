@@ -27,7 +27,7 @@ class HPINNMovingHorizonEstimator:
         cfg_dir = project_root / "config"
         trained_k_yaml = cfg_dir / "trained_params.yaml"
 
-        t_sim = np.arange(self.horizon_steps, dtype=np.float32) * self.dt
+        t_sim = np.arange(self.horizon_steps, dtype=np.float32) * self.dt * 10
         self.model, self.dummy, initial_states = build_model_from_config(
             cfg_dir=cfg_dir,
             trained_k_yaml=trained_k_yaml,

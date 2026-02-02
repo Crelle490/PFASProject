@@ -32,14 +32,14 @@ def main():
     z_true = y_true[:, meas_idx[0]]
 
     rng = np.random.default_rng(0)
-    meas_noise_std = 1e-4
+    meas_noise_std = 1e-6
     z_meas = z_true + rng.normal(0.0, meas_noise_std, size=z_true.shape).astype(np.float32)
 
-    print("Step | z (meas) | F- (est)")
+    print("Step | z (meas) | F- (est) | F- (true)")
     print("---------------------------")
     for k in range(t_total):
         state, _traj = mhe.step([float(z_meas[k])])
-        print(f"{k:4d} | {z_meas[k]:.6f} | {float(state[7]):.6f}")
+        print(f"{k:4e} | {z_meas[k]:.6e} | {float(state[7]):.6e} | {z_true[k]:.6e}")
 
 
 if __name__ == "__main__":

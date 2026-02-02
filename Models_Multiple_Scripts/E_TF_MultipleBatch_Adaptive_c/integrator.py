@@ -24,7 +24,6 @@ class RungeKuttaIntegratorCell(Layer):
 
         # Trainable parameters in log10-space.
         self._log_k_init = np.log10([k1, k2, k3, k4, k5, k6, k7])
-        self.c_pfas_init = 9.074690e-07
 
     def build(self, input_shape):
         k_names = ['k1','k2','k3','k4','k5','k6','k7']
@@ -40,8 +39,11 @@ class RungeKuttaIntegratorCell(Layer):
         # Convert log parameters to actual values.
         params = {name: 10.0 ** log_v for name, log_v in self.log_k_values.items()}
         y = states[0]  # shape: (batch, 8)
-        for name, log_v in self.log_k_values.items():
-            tf.debugging.assert_all_finite(log_v, f"log_{name} non-finite")
+
+        # update catalyst based on input
+        #if inputs is list: # This is a problematic way on giving the inputs, but changing may brake other code.
+        #self.c_cl = float(inputs[0])
+        #self.c_so3 = float(inputs[1])
 
         # RK4 increments
         k1 = self._fun(y, params) * self.dt
@@ -49,10 +51,6 @@ class RungeKuttaIntegratorCell(Layer):
         k3 = self._fun(y + 0.5 * k2, params) * self.dt
         k4 = self._fun(y + k3, params) * self.dt
         y_next = y + (k1 + 2.0*k2 + 2.0*k3 + k4) / 6.0
-        tf.debugging.assert_all_finite(y_next, "y_next has NaN/Inf")
-        tf.print("max|y|", tf.reduce_max(tf.abs(y_next)))
-
-
 
         if self.for_prediction:
             output = y_next  # full 8-state
@@ -75,8 +73,8 @@ class RungeKuttaIntegratorCell(Layer):
         beta_j    = 2.57e4
 
         # Use initial PFAS concentration from dummy initial state (first species)
-        self.c_pfas_init = float(self.initial_state[0, 0])
-        denominator = params['k1'] * self.c_pfas_init + beta_j + k_so3_eaq * self.c_so3 + k_cl_eaq * self.c_cl
+        c_pfas_init = float(self.initial_state[0, 0])
+        denominator = params['k1'] * c_pfas_init + beta_j + k_so3_eaq * self.c_so3 + k_cl_eaq * self.c_cl
         c_eaq = numerator / denominator  # scalar
 
         # Reaction rates (first-order in PFAS and c_eaq)
@@ -99,7 +97,7 @@ class RungeKuttaIntegratorCell(Layer):
         Returns a scalar (float).
         """
         p = self.constants
-        c_pfas_init = self.c_pfas_init
+        c_pfas_init = float(self.initial_state[0, 0])
         
         # [OH-] from pH
         c_oh_m = np.power(10.0, -14.0 + self.pH)
@@ -134,4 +132,5 @@ class RungeKuttaIntegratorCell(Layer):
 
         # Contribution @254
         numerator_254 = p["I0_254"] * f_so3_254 * p["phi_so3_254"] * (1.0 - np.power(10.0, -p["epsilon_so3_254"] * p["l"] * self.c_so3))
+
         return float(numerator_185 + numerator_254)

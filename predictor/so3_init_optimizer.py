@@ -9,21 +9,21 @@ import matplotlib.pyplot as plt   # <-- add
 
 # --- Hardcoded simulation/optimization settings ---
 DT = 10.0
-T_FINAL = 600.0
+T_FINAL = 700.0
 PFAS_THRESHOLD = 1e-9
-THRESHOLD_SMOOTHING = 1e-9
-W_TIME = 1.0
-W_SO3 = 1.0
+THRESHOLD_SMOOTHING = 1e-2
+W_TIME = 0.01
+W_SO3 = 69.3 
 SO3_MIN = 0.0
 SO3_MAX = 0.05
 OPT_STEPS = 50
-LEARNING_RATE = 1e-2
+LEARNING_RATE = 1e-1
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from Models_Multiple_Scripts.D_TF_MutipleBatch_Fixed_c.model import create_model
+from Models_Multiple_Scripts.E_TF_MultipleBatch_Adaptive_c.model import create_model
 
 
 def load_trained_k(path):
@@ -95,11 +95,13 @@ def main():
 
     print(f"Optimizing c_so3 in [{SO3_MIN}, {SO3_MAX}] for {OPT_STEPS} steps...")
     for step in range(OPT_STEPS):
+
         with tf.GradientTape() as tape:
             c_so3 = SO3_MIN + (SO3_MAX - SO3_MIN) * tf.nn.sigmoid(c_so3_unconstrained)
             y_pred = model([dummy, initial_states], training=False)
             total_pfas = tf.reduce_sum(y_pred[:, :, :7], axis=-1)
             above = tf.nn.sigmoid((total_pfas - PFAS_THRESHOLD) / THRESHOLD_SMOOTHING)
+            
             time_above = tf.reduce_sum(above) * DT
             cost = W_TIME * time_above + W_SO3 * c_so3
 

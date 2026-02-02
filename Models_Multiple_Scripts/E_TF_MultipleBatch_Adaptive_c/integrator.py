@@ -40,10 +40,8 @@ class RungeKuttaIntegratorCell(Layer):
         # Convert log parameters to actual values.
         params = {name: 10.0 ** log_v for name, log_v in self.log_k_values.items()}
         y = states[0]  # shape: (batch, 8)
-
-        # update catalyst based on input
-        #self.c_cl = float(inputs[0])
-        #self.c_so3 = float(inputs[1])
+        for name, log_v in self.log_k_values.items():
+            tf.debugging.assert_all_finite(log_v, f"log_{name} non-finite")
 
         # RK4 increments
         k1 = self._fun(y, params) * self.dt
@@ -51,6 +49,10 @@ class RungeKuttaIntegratorCell(Layer):
         k3 = self._fun(y + 0.5 * k2, params) * self.dt
         k4 = self._fun(y + k3, params) * self.dt
         y_next = y + (k1 + 2.0*k2 + 2.0*k3 + k4) / 6.0
+        tf.debugging.assert_all_finite(y_next, "y_next has NaN/Inf")
+        tf.print("max|y|", tf.reduce_max(tf.abs(y_next)))
+
+
 
         if self.for_prediction:
             output = y_next  # full 8-state
@@ -132,5 +134,4 @@ class RungeKuttaIntegratorCell(Layer):
 
         # Contribution @254
         numerator_254 = p["I0_254"] * f_so3_254 * p["phi_so3_254"] * (1.0 - np.power(10.0, -p["epsilon_so3_254"] * p["l"] * self.c_so3))
-
         return float(numerator_185 + numerator_254)

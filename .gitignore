@@ -61,3 +61,7 @@ jit_tmp*.so
 # Numpy / data artifacts
 *.npz
 *.npy
+
+# Python
+__pycache__/
+*.pyc

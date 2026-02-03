@@ -8,16 +8,15 @@ import matplotlib.pyplot as plt   # <-- add
 
 
 # --- Hardcoded simulation/optimization settings ---
-DT = 10.0
-T_FINAL = 700.0
-PFAS_THRESHOLD = 1e-9
-THRESHOLD_SMOOTHING = 1e-2
+DT = 5.0
+T_FINAL = 1200.0
+PFAS_THRESHOLD = 1e-10
+THRESHOLD_SMOOTHING = 1e-9
 W_TIME = 0.01
 W_SO3 = 69.3 
-SO3_MIN = 0.0
-SO3_MAX = 0.05
-OPT_STEPS = 50
-LEARNING_RATE = 1e-1
+SO3_MIN = 0.002
+SO3_MAX = 0.003
+GRID_POINTS = 30
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -77,77 +76,52 @@ def main():
     t_sim = np.arange(0.0, T_FINAL, DT, dtype=np.float32)
     dummy = tf.zeros((1, t_sim.size, 1), dtype=tf.float32)
 
-    c_so3_unconstrained = tf.Variable(0.0, dtype=tf.float32)
-    c_so3 = SO3_MIN + (SO3_MAX - SO3_MIN) * tf.nn.sigmoid(c_so3_unconstrained)
+    c_so3_grid = np.linspace(SO3_MIN, SO3_MAX, GRID_POINTS, dtype=np.float32)
 
-    model, initial_states = build_model_from_config(cfg_dir, trained_k_yaml, t_sim, DT, c_so3)
-
-    optimizer = tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE)
-
-    best_cost = None
+    best_cost = np.inf
     best_c_so3 = None
 
-    # ---- add history buffers ----
-    steps_hist = []
     cost_hist = []
     time_above_hist = []
-    cso3_hist = []
 
-    print(f"Optimizing c_so3 in [{SO3_MIN}, {SO3_MAX}] for {OPT_STEPS} steps...")
-    for step in range(OPT_STEPS):
+    print(f"Grid searching c_so3 in [{SO3_MIN}, {SO3_MAX}] with {GRID_POINTS} points...")
+    for idx, c_so3_value in enumerate(c_so3_grid):
+        # Build the model for this specific c_so3 value (no batching support)
+        model, initial_states = build_model_from_config(cfg_dir, trained_k_yaml, t_sim, DT, float(c_so3_value))
 
-        with tf.GradientTape() as tape:
-            c_so3 = SO3_MIN + (SO3_MAX - SO3_MIN) * tf.nn.sigmoid(c_so3_unconstrained)
-            y_pred = model([dummy, initial_states], training=False)
-            total_pfas = tf.reduce_sum(y_pred[:, :, :7], axis=-1)
-            above = tf.nn.sigmoid((total_pfas - PFAS_THRESHOLD) / THRESHOLD_SMOOTHING)
-            
-            time_above = tf.reduce_sum(above) * DT
-            cost = W_TIME * time_above + W_SO3 * c_so3
+        y_pred = model([dummy, initial_states], training=False)
+        total_pfas = tf.reduce_sum(y_pred[:, :, :6], axis=-1)
+        above = tf.nn.sigmoid((total_pfas - PFAS_THRESHOLD) / THRESHOLD_SMOOTHING)
 
-        grads = tape.gradient(cost, [c_so3_unconstrained])
-        optimizer.apply_gradients(zip(grads, [c_so3_unconstrained]))
+        time_above = float(tf.reduce_sum(above) * DT)
+        cost = float(W_TIME * time_above + W_SO3 * c_so3_value)
 
-        cost_val = float(cost.numpy())
-        c_so3_val = float(c_so3.numpy())
-        time_above_val = float(time_above.numpy())
+        cost_hist.append(cost)
+        time_above_hist.append(time_above)
 
-        # ---- store history ----
-        steps_hist.append(step)
-        cost_hist.append(cost_val)
-        time_above_hist.append(time_above_val)
-        cso3_hist.append(c_so3_val)
-
-        if best_cost is None or cost_val < best_cost:
-            best_cost = cost_val
-            best_c_so3 = c_so3_val
+        if cost < best_cost:
+            best_cost = cost
+            best_c_so3 = float(c_so3_value)
 
         print(
-            f"step={step:04d} cost={cost_val:.6e} "
-            f"time_above={time_above_val:.6e} c_so3={c_so3_val:.6e}"
+            f"idx={idx:03d} c_so3={c_so3_value:.6e} "
+            f"time_above={time_above:.6e} cost={cost:.6e}"
         )
 
     print(f"best_c_so3={best_c_so3:.6e} best_cost={best_cost:.6e}")
 
-    # ---- plot learning curves ----
+    # ---- plot sweep curves ----
     plt.figure()
-    plt.plot(steps_hist, cost_hist, marker="o")
-    plt.xlabel("Optimization step")
+    plt.plot(c_so3_grid, cost_hist, marker="o")
+    plt.xlabel("c_so3 [M]")
     plt.ylabel("Cost")
     plt.grid(True)
     plt.tight_layout()
 
     plt.figure()
-    plt.plot(steps_hist, time_above_hist, marker="o")
-    plt.xlabel("Optimization step")
+    plt.plot(c_so3_grid, time_above_hist, marker="o")
+    plt.xlabel("c_so3 [M]")
     plt.ylabel("Time above PFAS threshold [s]")
-    plt.grid(True)
-    plt.tight_layout()
-
-    plt.figure()
-    plt.plot(steps_hist, cso3_hist, marker="o")
-    plt.xlabel("Optimization step")
-    plt.ylabel("c_so3 [M]")
     plt.grid(True)
     plt.tight_layout()
 

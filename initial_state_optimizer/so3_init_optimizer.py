@@ -18,34 +18,14 @@ SO3_MIN = 0
 SO3_MAX = 0.01
 GRID_POINTS = 30
 
+from helper_functions import load_constants, load_initials, load_trained_k
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from Models_Multiple_Scripts.E_TF_MultipleBatch_Adaptive_c.model import create_model
 
-
-def load_trained_k(path):
-    d = yaml.safe_load(open(path, "r"))
-    keys = [f"k{i}" for i in range(1, 8)]
-    return np.array([d[k] for k in keys], dtype=np.float32)
-
-
-def load_constants(cfg_dir):
-    return yaml.safe_load(open(Path(cfg_dir) / "physichal_paramters.yaml", "r"))
-
-
-def load_initials(cfg_dir):
-    d = yaml.safe_load(open(Path(cfg_dir) / "initial_conditions.yaml", "r"))
-    c_cl = d.get("c_cl")
-    if c_cl is None:
-        c_cl = d.get("c_cl_0")
-    c_so3 = d.get("c_so3")
-    if c_so3 is None:
-        c_so3 = d.get("c_so3_0")
-    if c_cl is None or c_so3 is None:
-        raise KeyError("initial_conditions.yaml must define c_cl/c_so3 or c_cl_0/c_so3_0")
-    return float(d["pH"]), float(c_cl), float(c_so3), float(d["c_pfas_init"])
 
 
 def build_model_from_config(cfg_dir, trained_k_yaml, t_sim, dt, c_so3_value):

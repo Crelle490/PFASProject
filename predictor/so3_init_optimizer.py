@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import tensorflow as tf
 import yaml
-import matplotlib.pyplot as plt   # <-- add
+import matplotlib.pyplot as plt
 
 
 # --- Hardcoded simulation/optimization settings ---
@@ -12,10 +12,10 @@ DT = 5.0
 T_FINAL = 1200.0
 PFAS_THRESHOLD = 1e-10
 THRESHOLD_SMOOTHING = 1e-9
-W_TIME = 0.01
-W_SO3 = 69.3 
-SO3_MIN = 0.002
-SO3_MAX = 0.003
+W_TIME = 0.00021866666  # DKK/s @393.6W and 2 kr/kWh
+W_SO3  = 3.96297        # DKK*L/mol @90ml equivalent to one batch through reactor
+SO3_MIN = 0.0
+SO3_MAX = 0.01
 GRID_POINTS = 30
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -48,9 +48,12 @@ def load_initials(cfg_dir):
     return float(d["pH"]), float(c_cl), float(c_so3), float(d["c_pfas_init"])
 
 
-def build_model_from_config(cfg_dir, trained_k_yaml, t_sim, dt, c_so3_value):
+def build_model_from_config(cfg_dir, trained_k_yaml, t_sim, dt):
+    """
+    Builds a prediction model whose catalyst concentrations are supplied dynamically via u_traj.
+    """
     constants = load_constants(cfg_dir)
-    pH, c_cl, _c_so3_init, c_pfas_init = load_initials(cfg_dir)
+    pH, c_cl_init, c_so3_init, c_pfas_init = load_initials(cfg_dir)
     k = load_trained_k(trained_k_yaml)
 
     t_sim = np.asarray(t_sim, dtype=np.float32)
@@ -61,11 +64,24 @@ def build_model_from_config(cfg_dir, trained_k_yaml, t_sim, dt, c_so3_value):
     initial_states[0, 0] = np.float32(c_pfas_init)
     initial_states = tf.convert_to_tensor(initial_states)
 
-    model = create_model(*k, constants, c_cl, c_so3_value, pH, dt,
+    # NOTE:
+    # create_model signature still has c_cl, c_so3, but with the new integrator
+    # these should be treated as nominal defaults only.
+    model = create_model(*k, constants,
+                         c_cl_init, c_so3_init, pH, dt,
                          initial_states, t_pinn_list, t_true_list,
                          for_prediction=True)
     model.trainable = False
-    return model, initial_states
+    return model, initial_states, c_cl_init, c_so3_init
+
+
+def make_constant_u_traj(T, c_so3_value, dtype=tf.float32):
+    """
+    u(t) = [c_so3(t)] with shape (1, T, 1)
+    """
+    u = np.zeros((1, T, 1), dtype=np.float32)
+    u[0, :, 0] = np.float32(c_so3_value)
+    return tf.convert_to_tensor(u, dtype=dtype)
 
 
 def main():
@@ -74,7 +90,10 @@ def main():
     trained_k_yaml = cfg_dir / "trained_params.yaml"
 
     t_sim = np.arange(0.0, T_FINAL, DT, dtype=np.float32)
-    dummy = tf.zeros((1, t_sim.size, 1), dtype=tf.float32)
+    T = t_sim.size
+
+    # Build model ONCE (k, constants, pH, etc. are fixed)
+    model, initial_states, c_cl_init, c_so3_init = build_model_from_config(cfg_dir, trained_k_yaml, t_sim, DT)
 
     c_so3_grid = np.linspace(SO3_MIN, SO3_MAX, GRID_POINTS, dtype=np.float32)
 
@@ -86,11 +105,17 @@ def main():
 
     print(f"Grid searching c_so3 in [{SO3_MIN}, {SO3_MAX}] with {GRID_POINTS} points...")
     for idx, c_so3_value in enumerate(c_so3_grid):
-        # Build the model for this specific c_so3 value (no batching support)
-        model, initial_states = build_model_from_config(cfg_dir, trained_k_yaml, t_sim, DT, float(c_so3_value))
+        # Create a constant control trajectory for this candidate
+        u_traj = make_constant_u_traj(T, float(c_so3_value))
 
-        y_pred = model([dummy, initial_states], training=False)
+        # NEW: model input is [u_traj, initial_states]
+        y_pred = model([u_traj, initial_states], training=False)
+
+        # NOTE: your training output selection vs prediction:
+        # for_prediction=True returns full 8-state.
+        # Here you used :6 earlier; keep consistent with your definition of PFAS states.
         total_pfas = tf.reduce_sum(y_pred[:, :, :6], axis=-1)
+
         above = tf.nn.sigmoid((total_pfas - PFAS_THRESHOLD) / THRESHOLD_SMOOTHING)
 
         time_above = float(tf.reduce_sum(above) * DT)

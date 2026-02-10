@@ -36,11 +36,11 @@ def create_model(k1, k2, k3, k4, k5, k6, k7,
 
         T_sim_max = max(len(t) for t in t_pinn_list)
 
-        dummy_input = Input(shape=(T_sim_max, 1), name="dummy_input")
+        u_in = Input(shape=(T_sim_max, 1), name="u_traj")
         init_in = Input(shape=(8,), name="initial_states")
 
-        outputs = RNN(rk_cell, return_sequences=True)(dummy_input, initial_state=[init_in])
-        model = Model(inputs=[dummy_input, init_in], outputs=outputs)
+        outputs = RNN(rk_cell, return_sequences=True)(u_in, initial_state=[init_in])
+        model = Model(inputs=[u_in, init_in], outputs=outputs)
 
         loss_fn = create_loss_fn_multi(t_pinn_list, t_true_list)
         lr = PiecewiseConstantDecay(boundaries=[70, 150, 250],

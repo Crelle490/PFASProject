@@ -87,12 +87,14 @@ def display_trained_parameters(model):
 
     # 2) extra log10 parameters (convert 10**)
     extra_log10 = ["log_Kh_mM", "log_gamma_scale", "log_krec"]
+    #extra_log10 = []
     for name in extra_log10:
         if hasattr(rk_cell, name):
             out[name.replace("log_", "")] = float((10.0 ** getattr(rk_cell, name).numpy()))
 
     # 3) linear parameters (store raw)
     linear_params = ["theta_other", "theta1", "theta2", "phi0", "phi1", "phi2"]
+    #linear_params = []
     for name in linear_params:
         if hasattr(rk_cell, name):
             out[name] = float(getattr(rk_cell, name).numpy())
@@ -136,11 +138,14 @@ def main():
 
     # Data CSV (defluorination)
     candidates = [
-        data_dir / "Batch_Defluorination_data_formatted.csv"
+        data_dir / "Batch_Defluorination_data_formatted.csv",
+        here / "Batch_Defluorination_data_formatted.csv",
+        root / "Batch_Defluorination_data_formatted.csv",
     ]
-    batch_csv = next((p for p in candidates if p.exists()), None)
+    batch_csv = next((p for p in candidates if p.exists() and p.is_file()), None)
     if batch_csv is None:
         raise FileNotFoundError(f"Missing data file. Tried: {', '.join(str(p) for p in candidates)}")
+    print(f"Using training data: {batch_csv}")
 
     df = pd.read_csv(batch_csv)
     if "sequence_id" not in df.columns or "time (s)" not in df.columns:
@@ -157,19 +162,19 @@ def main():
     col_c_so3 = _first_existing_col(df, ["c_so3_0_M", "c_so3_0", "c_so3"])
     col_pH    = _first_existing_col(df, ["pH", "ph"])
 
-    # Need initial PFOA concentration per batch for scaling
+    # Need initial PFOA concentration per batch for scaling.
+    # If config defines c_pfoa0_M/c_pfoa_0_M, use it as a global override.
     col_c0 = _first_existing_col(df, ["c_pfoa0_M", "c_pfoa_0_M", "c_pfoa0", "c_pfoa_0",
                                      "c_pfas0_M", "c_pfas_0_M", "C0_PFOA", "PFOA0"])
-    if col_c0 is None:
-        if "c_pfoa0_M" in init_vals:
-            c0_default = float(init_vals["c_pfoa0_M"])
-        elif "c_pfoa_0_M" in init_vals:
-            c0_default = float(init_vals["c_pfoa_0_M"])
-        else:
-            raise ValueError("Missing initial PFOA concentration per batch. Please add a constant column like "
-                             "'c_pfoa0_M' (M) to your CSV for each sequence_id.")
-    else:
-        c0_default = None
+    c0_forced = None
+    if "c_pfoa0_M" in init_vals:
+        c0_forced = float(init_vals["c_pfoa0_M"])
+    elif "c_pfoa_0_M" in init_vals:
+        c0_forced = float(init_vals["c_pfoa_0_M"])
+
+    if c0_forced is None and col_c0 is None:
+        raise ValueError("Missing initial PFOA concentration per batch. Please add a constant column like "
+                         "'c_pfoa0_M' (M) to your CSV for each sequence_id), or set c_pfoa0_M in initial_conditions.yaml.")
 
     groups = df.groupby("sequence_id")
 
@@ -192,10 +197,12 @@ def main():
         c_so3 = float(g[col_c_so3].iloc[0]) if col_c_so3 else c_so3_default
         pH    = float(g[col_pH].iloc[0])    if col_pH    else pH_default
 
-        if col_c0 is not None:
+        if c0_forced is not None:
+            c_pfoa0 = float(c0_forced)
+        elif col_c0 is not None:
             c_pfoa0 = float(g[col_c0].iloc[0])
         else:
-            c_pfoa0 = float(c0_default)
+            raise ValueError("No valid source for c_pfoa0 after input checks.")
 
         t_true_list.append(t_seq)
         y_true_list.append(y_seq)

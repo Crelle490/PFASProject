@@ -6,8 +6,12 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import RMSprop, Adam
 from tensorflow.keras.optimizers.schedules import PiecewiseConstantDecay
 
-from integrator import RungeKuttaIntegratorCell
-from loss import create_loss_fn_multi
+try:
+    from .integrator import RungeKuttaIntegratorCell
+    from .loss import create_loss_fn_multi
+except Exception:
+    from integrator import RungeKuttaIntegratorCell
+    from loss import create_loss_fn_multi
 
 def create_model(k1, k2, k3, k4, k5, k6, k7, betaj, k_cl, k_so3,
                  constants,
@@ -49,5 +53,7 @@ def create_model(k1, k2, k3, k4, k5, k6, k7, betaj, k_cl, k_so3,
     loss_fn = create_loss_fn_multi(t_pinn_list, t_true_list)
     lr = PiecewiseConstantDecay(boundaries=[70, 150, 250, 700],
                                 values=[1e-2, 5e-3, 2e-3, 2e-3, 1e-3])
-    model.compile(optimizer=RMSprop(learning_rate=lr), loss=loss_fn)
+    if not(for_prediction):
+        model.compile(optimizer=RMSprop(learning_rate=lr), loss=loss_fn)
+        
     return model

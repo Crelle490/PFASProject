@@ -37,11 +37,36 @@ class RungeKuttaIntegratorCell(Layer):
         # log10 init for global params
         self._log_k_init = np.log10([k1, k2, k3, k4, k5, k6, k7, betaj, k_cl, k_so3])
 
+        p = self.constants
+        tf32 = tf.float32
+        self.epsilon_h2o_185  = tf.constant(float(p["epsilon_h2o_185"]), dtype=tf32)
+        self.epsilon_oh_m_185   = tf.constant(float(p["epsilon_oh_m_185"]), dtype=tf32)
+        self.epsilon_cl_185   = tf.constant(float(p["epsilon_cl_185"]), dtype=tf32)
+        self.epsilon_so3_185  = tf.constant(float(p["epsilon_so3_185"]), dtype=tf32)
+        self.epsilon_pfas_185 = tf.constant(float(p["epsilon_pfas_185"]), dtype=tf32)
+
+        self.epsilon_h2o_254  = tf.constant(float(p["epsilon_h2o_254"]), dtype=tf32)
+        self.epsilon_so3_254  = tf.constant(float(p["epsilon_so3_254"]), dtype=tf32)
+        self.epsilon_pfas_254 = tf.constant(float(p["epsilon_pfas_254"]), dtype=tf32)
+
+        self.phi_h2o_185  = tf.constant(float(p["phi_h2o_185"]), dtype=tf32)
+        self.phi_oh_m_185   = tf.constant(float(p["phi_oh_m_185"]), dtype=tf32)
+        self.phi_cl_185   = tf.constant(float(p["phi_cl_185"]), dtype=tf32)
+        self.phi_so3_185  = tf.constant(float(p["phi_so3_185"]), dtype=tf32)
+        self.phi_so3_254  = tf.constant(float(p["phi_so3_254"]), dtype=tf32)
+
+        self.I0_185 = tf.constant(float(p["I0_185"]), dtype=tf32)
+        self.I0_254 = tf.constant(float(p["I0_254"]), dtype=tf32)
+
+        self.c_h2o = tf.constant(float(p["c_h2o"]), dtype=tf32)
+        self.l = tf.constant(float(p["l"]), dtype=tf32)
+        
+
     def build(self, input_shape):
         # ---- global trainable kinetics (log10-space) ----
         names = ['k1','k2','k3','k4','k5','k6','k7','betaj','k_cl','k_so3']
         self.log_k_values = {
-            n: self.add_weight(f'log_{n}', shape=(),
+            n: self.add_weight(name=f'log_{n}', shape=(),
                                initializer=tf.constant_initializer(v),
                                trainable=True)
             for n, v in zip(names, self._log_k_init)
@@ -52,51 +77,25 @@ class RungeKuttaIntegratorCell(Layer):
         # This is the key to fitting the "no SO3" sequence.
         # alpha_other = exp(theta_other)
         # ==========================================================
-        self.theta_other = self.add_weight(
-            "theta_other", shape=(),
-            initializer=tf.constant_initializer(0.0),  # alpha_other=1 at start
-            trainable=True
-        )
+        self.theta_other = self.add_weight(name="theta_other", shape=(),initializer=tf.constant_initializer(0.0),trainable=True)
 
         # ==========================================================
         # SO3 modifier: alpha_so3(x) = exp(theta1*x + theta2*x^2), alpha_so3(0)=1
         # Use x = log1p(c_mM / Kh_mM) to avoid early saturation.
         # Kh_mM is log10-parametrized to stay positive.
         # ==========================================================
-        self.log_Kh_mM = self.add_weight(
-            "log_Kh_mM", shape=(),
-            initializer=tf.constant_initializer(np.log10(5.0)),  # Kh ~ 5 mM start
-            trainable=True
-        )
-        self.theta1 = self.add_weight("theta1", shape=(),
-                                      initializer=tf.constant_initializer(0.0),
-                                      trainable=True)
-        self.theta2 = self.add_weight("theta2", shape=(),
-                                      initializer=tf.constant_initializer(0.0),
-                                      trainable=True)
+        self.log_Kh_mM = self.add_weight(name="log_Kh_mM", shape=(),initializer=tf.constant_initializer(np.log10(5.0)), trainable=True)
+        self.theta1 = self.add_weight(name="theta1", shape=(),initializer=tf.constant_initializer(0.0),trainable=True)
+        self.theta2 = self.add_weight(name="theta2", shape=(),initializer=tf.constant_initializer(0.0),trainable=True)
 
         # Optional extra sink gamma(x) (kept small at x=0)
-        self.log_gamma_scale = self.add_weight(
-            "log_gamma_scale", shape=(),
-            initializer=tf.constant_initializer(4.0),  # 1e4
-            trainable=True
-        )
-        self.phi0 = self.add_weight("phi0", shape=(),
-                                    initializer=tf.constant_initializer(-6.0),  # small gamma at x=0
-                                    trainable=True)
-        self.phi1 = self.add_weight("phi1", shape=(),
-                                    initializer=tf.constant_initializer(0.0),
-                                    trainable=True)
-        self.phi2 = self.add_weight("phi2", shape=(),
-                                    initializer=tf.constant_initializer(0.0),
-                                    trainable=True)
+        self.log_gamma_scale = self.add_weight(name="log_gamma_scale", shape=(),initializer=tf.constant_initializer(4.0),trainable=True)
+        self.phi0 = self.add_weight(name="phi0", shape=(),initializer=tf.constant_initializer(-6.0),trainable=True)
+        self.phi1 = self.add_weight(name="phi1", shape=(),initializer=tf.constant_initializer(0.0),trainable=True)
+        self.phi2 = self.add_weight(name="phi2", shape=(),initializer=tf.constant_initializer(0.0),trainable=True)
 
         # Quadratic termination for eaq: k_rec >= 0
-        self.log_krec = self.add_weight(
-            "log_krec", shape=(),
-            initializer=tf.constant_initializer(8.0),
-            trainable=True
-        )
+        self.log_krec = self.add_weight(name="log_krec", shape=(),initializer=tf.constant_initializer(8.0),trainable=True)
 
         self.built = True
 
@@ -124,9 +123,17 @@ class RungeKuttaIntegratorCell(Layer):
         k3 = self._fun(y + 0.5*k2, params, c_cl, c_so3, pH, c_pfoa0) * self.dt
         k4 = self._fun(y + k3,     params, c_cl, c_so3, pH, c_pfoa0) * self.dt
         y_next = y + (k1 + 2*k2 + 2*k3 + k4) / 6.0
+        # Keep concentrations physically meaningful and avoid numerical sign flips.
+        y_next = tf.maximum(y_next, 0.0)
 
         if self.for_prediction:
-            output = y_next
+            F = y_next[:, 7:8]
+            if self.output_mode == "fluoride":
+                output = y_next
+            else:
+                eps = tf.constant(1e-12, tf.float32)
+                output = 100.0 * F / (self.nF * c_pfoa0 + eps)
+            
         else:
             F = y_next[:, 7:8]
             if self.output_mode == "fluoride":
@@ -141,7 +148,7 @@ class RungeKuttaIntegratorCell(Layer):
         eps = tf.constant(1e-12, tf.float32)
 
         # states: 7 PFAS + F-
-        y_vars = [y[:, i:i+1] for i in range(7)]
+        y_vars = [tf.maximum(y[:, i:i+1], 0.0) for i in range(7)]
 
         # ---- generation split ----
         G_other, G_so3 = self.generation_of_eaq_parts_tf(c_cl, c_so3, pH, y_vars)
@@ -162,8 +169,7 @@ class RungeKuttaIntegratorCell(Layer):
         # ---- linear consumption coefficient ----
         beta_j   = params['betaj']
         k_cl_eaq = params['k_cl']
-        # k_so3_eaq = params['k_so3']
-        k_so3_eaq = tf.constant(1.5e6, dtype=tf.float32)
+        k_so3_eaq = params['k_so3']
 
         # PFAS sink coefficient: sum_i k_i * C_i(t)
         D_pfas = tf.add_n([params[f'k{i+1}'] * y_vars[i] for i in range(7)])
@@ -177,8 +183,11 @@ class RungeKuttaIntegratorCell(Layer):
 
         # ---- quadratic termination ----
         k_rec = tf.pow(self.ten, self.log_krec)
-        disc = tf.sqrt(tf.square(D_lin) + 4.0 * k_rec * tf.maximum(G, 0.0) + 1e-24)
-        c_eaq = (disc - D_lin) / (2.0 * k_rec + 1e-24)
+        G_pos = tf.maximum(G, 0.0)
+        disc = tf.sqrt(tf.square(D_lin) + 4.0 * k_rec * G_pos + 1e-24)
+        # Stable positive root of: k_rec*c_eaq^2 + D_lin*c_eaq - G_pos = 0
+        c_eaq = (2.0 * G_pos) / (D_lin + disc + 1e-24)
+        c_eaq = tf.maximum(c_eaq, 0.0)
 
         # ---- PFAS-eaq reaction rates ----
         rates = [params[f'k{i+1}'] * c_eaq * y_vars[i] for i in range(7)]
@@ -201,47 +210,53 @@ class RungeKuttaIntegratorCell(Layer):
     # -------------------------------------------------------------------------
     def generation_of_eaq_parts_tf(self, c_cl, c_so3, pH, y_vars):
         c_pfas_total = tf.add_n(y_vars)
-        p = self.constants
-        ten = self.ten
+        
         eps = tf.constant(1e-12, tf.float32)
-
-        c_oh_m = tf.pow(ten, (-14.0 + pH))
+        c_oh_m = tf.pow(self.ten, (-14.0 + pH))
 
         Sigma_f_185 = (
-            p["epsilon_h2o_185"] * p["c_h2o"] +
-            p["epsilon_oh_m_185"] * c_oh_m +
-            p["epsilon_cl_185"]   * c_cl +
-            p["epsilon_so3_185"]  * c_so3 +
-            p["epsilon_pfas_185"] * c_pfas_total
+            self.epsilon_h2o_185 * self.c_h2o +
+            self.epsilon_oh_m_185 * c_oh_m +
+            self.epsilon_cl_185   * c_cl +
+            self.epsilon_so3_185  * c_so3 +
+            self.epsilon_pfas_185 * c_pfas_total
         ) + eps
 
         Sigma_f_254 = (
-            p["epsilon_h2o_254"] * p["c_h2o"] +
-            p["epsilon_so3_254"] * c_so3 +
-            p["epsilon_pfas_254"] * c_pfas_total
+            self.epsilon_h2o_254 * self.c_h2o +
+            self.epsilon_so3_254 * c_so3 +
+            self.epsilon_pfas_254 * c_pfas_total
         ) + eps
 
-        f_h2o_185  = (p["epsilon_h2o_185"] * p["c_h2o"]) / Sigma_f_185
-        f_oh_m_185 = (p["epsilon_oh_m_185"] * c_oh_m)     / Sigma_f_185
-        f_cl_185   = (p["epsilon_cl_185"]   * c_cl)       / Sigma_f_185
-        f_so3_185  = (p["epsilon_so3_185"]  * c_so3)      / Sigma_f_185
-        f_so3_254  = (p["epsilon_so3_254"]  * c_so3)      / Sigma_f_254
+        f_h2o_185  = (self.epsilon_h2o_185 * self.c_h2o) / Sigma_f_185
+        f_oh_m_185 = (self.epsilon_oh_m_185 * c_oh_m)     / Sigma_f_185
+        f_cl_185   = (self.epsilon_cl_185   * c_cl)       / Sigma_f_185
+        f_so3_185  = (self.epsilon_so3_185  * c_so3)      / Sigma_f_185
+        f_so3_254  = (self.epsilon_so3_254  * c_so3)      / Sigma_f_254
 
         def absorb(eps_abs, c):
-            return (1.0 - tf.pow(ten, -(eps_abs * p["l"] * c)))
+            return (1.0 - tf.pow(self.ten, -(eps_abs * self.l * c)))
 
-        term_h2o_185  = f_h2o_185  * p["phi_h2o_185"]  * absorb(p["epsilon_h2o_185"],  p["c_h2o"])
-        term_oh_m_185 = f_oh_m_185 * p["phi_oh_m_185"] * absorb(p["epsilon_oh_m_185"], c_oh_m)
-        term_cl_185   = f_cl_185   * p["phi_cl_185"]   * absorb(p["epsilon_cl_185"],  c_cl)
-        term_so3_185  = f_so3_185  * p["phi_so3_185"]  * absorb(p["epsilon_so3_185"], c_so3)
+        term_h2o_185  = f_h2o_185  * self.phi_h2o_185  * absorb(self.epsilon_h2o_185,  self.c_h2o)
+        term_oh_m_185 = f_oh_m_185 * self.phi_oh_m_185 * absorb(self.epsilon_oh_m_185, c_oh_m)
+        term_cl_185   = f_cl_185   * self.phi_cl_185   * absorb(self.epsilon_cl_185,  c_cl)
+        term_so3_185  = f_so3_185  * self.phi_so3_185  * absorb(self.epsilon_so3_185, c_so3)
 
         # 185nm: split
-        G_other_185 = p["I0_185"] * (term_h2o_185 + term_oh_m_185 + term_cl_185)
-        G_so3_185   = p["I0_185"] * term_so3_185
+        G_other_185 = self.I0_185 * (term_h2o_185 + term_oh_m_185 + term_cl_185)
+        G_so3_185   = self.I0_185 * term_so3_185
 
         # 254nm: sulfite only in your current model
-        G_so3_254 = p["I0_254"] * f_so3_254 * p["phi_so3_254"] * absorb(p["epsilon_so3_254"], c_so3)
+        G_so3_254 = self.I0_254 * f_so3_254 * self.phi_so3_254 * absorb(self.epsilon_so3_254, c_so3)
 
         G_other = G_other_185
         G_so3 = G_so3_185 + G_so3_254
         return G_other, G_so3
+
+    def debug_extract(self, inputs):
+        u = tf.cast(inputs, tf.float32)
+        c_cl   = self._get_channel_or_default(u, "c_cl",  self.c_cl_default)
+        c_so3  = self._get_channel_or_default(u, "c_so3", self.c_so3_default)
+        pH     = self._get_channel_or_default(u, "pH",    self.pH_default)
+        c_pfoa0 = self._get_channel_or_default(u, "c_pfoa0", float(self.initial_state[0, 0]))
+        return c_cl, c_so3, pH, c_pfoa0

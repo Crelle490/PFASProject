@@ -18,11 +18,11 @@ class PINNModel(tf.keras.Model):
         dummy_input, initial_states = inputs
         return self.rnn(dummy_input, initial_state=[initial_states])
 
-def create_model(k1, k2, k3, k4, k5, k6, k7,
-                 constants, c_cl, c_so3, pH, dt_sim,
-                 initial_states, t_pinn_list, t_true_list,
-                 for_prediction=False):
-        # Build cell using first initial state as dummy
+    def create_model(k1, k2, k3, k4, k5, k6, k7,
+                    constants, c_cl, c_so3, pH, dt_sim,
+                    initial_states, t_pinn_list, t_true_list,
+                    for_prediction=False):
+
         if hasattr(initial_states, "numpy"):
             dummy_initial_state = np.asarray(initial_states[0:1].numpy(), dtype=np.float32)
         else:
@@ -39,11 +39,16 @@ def create_model(k1, k2, k3, k4, k5, k6, k7,
         u_in = Input(shape=(T_sim_max, 1), name="u_traj")
         init_in = Input(shape=(8,), name="initial_states")
 
-        outputs = RNN(rk_cell, return_sequences=True)(u_in, initial_state=[init_in])
+        rnn_layer = RNN(rk_cell, return_sequences=True, name="rk_rnn")
+        outputs = rnn_layer(u_in, initial_state=[init_in])
+
         model = Model(inputs=[u_in, init_in], outputs=outputs)
 
-        loss_fn = create_loss_fn_multi(t_pinn_list, t_true_list)
-        lr = PiecewiseConstantDecay(boundaries=[70, 150, 250],
-                                    values=[5e-2, 1e-2, 1e-3, 1e-4])
-        model.compile(optimizer=RMSprop(learning_rate=lr), loss=loss_fn)
+        # Only compile for training, not for prediction/optimization
+        if not for_prediction:
+            loss_fn = create_loss_fn_multi(t_pinn_list, t_true_list)
+            lr = PiecewiseConstantDecay(boundaries=[70, 150, 250],
+                                        values=[5e-2, 1e-2, 1e-3, 1e-4])
+            model.compile(optimizer=RMSprop(learning_rate=lr), loss=loss_fn)
+
         return model

@@ -5,7 +5,7 @@ from pathlib import Path
 
 def load_trained_k(path):
     d = yaml.safe_load(open(path, "r"))
-    keys = [f"k{i}" for i in range(1, 8)]
+    keys = [f"k{i}" for i in range(1, 8)] + ["betaj", "k_cl", "k_so3"]
     return np.array([d[k] for k in keys], dtype=np.float32)
 
 
@@ -19,4 +19,8 @@ def load_initials(cfg_dir):
     c_so3 = d.get("c_so3", d.get("c_so3_0"))
     if c_cl is None or c_so3 is None:
         raise KeyError("initial_conditions.yaml must define c_cl/c_so3 or c_cl_0/c_so3_0")
-    return float(d["pH"]), float(c_cl), float(c_so3), float(d["c_pfas_init"])
+    return float(d["pH"]), float(c_cl), float(c_so3), float(d["c_pfoa0_M"])
+
+def load_cell_params(path):
+    d = yaml.safe_load(open(path, "r"))
+    return {k: float(v) for k, v in d.items()}

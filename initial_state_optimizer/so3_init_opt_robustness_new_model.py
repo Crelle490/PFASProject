@@ -34,7 +34,7 @@ SO3_MAX = 0.01
 GRID_POINTS = 40
 N_REFINE = 400
 
-T_MAX = 1800.0
+T_MAX = 7000.0
 
 N_MC = 1000
 PM = 0.10
@@ -543,6 +543,12 @@ def main():
         "text.usetex": True,
         "font.family": "serif",
         "font.serif": ["Times New Roman"],
+        "font.size" : 16,
+        "axes.labelsize": 16,     # x/y labels
+        "axes.titlesize": 16,
+        "xtick.labelsize": 14,
+        "ytick.labelsize": 14,
+
     })
 
     # Plots (unchanged)

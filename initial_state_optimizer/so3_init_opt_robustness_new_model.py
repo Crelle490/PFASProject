@@ -22,7 +22,7 @@ from helper_functions import load_trained_k, load_constants, load_initials, load
 DT = 5.0
 T_FINAL = 10000.0
 
-PFAS_REMAINING_FRACTION = 0.10
+PFAS_REMAINING_FRACTION = 0.20
 SMOOTHNING_COEFFICIENT = 0.05
 
 W_TIME = 0.00021866666 #0.00021866666
@@ -36,7 +36,7 @@ N_REFINE = 400
 
 T_MAX = 7000.0
 
-N_MC = 1000
+N_MC = 10
 PM = 0.10
 RNG_SEED = 42
 

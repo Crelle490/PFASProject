@@ -20,9 +20,9 @@ from helper_functions import load_trained_k, load_constants, load_initials, load
 # Settings
 # -----------------------------------------------------------------------------
 DT = 5.0
-T_FINAL = 10000.0
+T_FINAL = 5000.0
 
-PFAS_REMAINING_FRACTION = 0.20
+PFAS_REMAINING_FRACTION = 0.40
 SMOOTHNING_COEFFICIENT = 0.05
 
 W_TIME = 0.00021866666 #0.00021866666
@@ -36,7 +36,7 @@ N_REFINE = 400
 
 T_MAX = 7000.0
 
-N_MC = 10
+N_MC = 1000
 PM = 0.10
 RNG_SEED = 42
 
@@ -94,11 +94,20 @@ def make_u_grid_batch_np(T, c_grid, c_cl, c_pfoa0):
     G = c_grid.size
     pH_vec = SO3_to_pH(c_grid).astype(np.float32)
 
+    
     u = np.zeros((G, T, 4), dtype=np.float32)
     u[:, :, 0] = np.float32(c_cl)
     u[:, :, 1] = c_grid[:, None]
     u[:, :, 2] = pH_vec[:, None]
-    u[:, :, 3] = np.float32(c_pfoa0)
+    c_pfoa0 = np.asarray(c_pfoa0, dtype=np.float32)
+    if c_pfoa0.ndim == 0:
+        # scalar -> fill all
+        u[:, :, 3] = c_pfoa0
+    elif c_pfoa0.ndim == 1 and c_pfoa0.shape[0] == u.shape[0]:
+        # (B,) -> (B,1) -> broadcast to (B,T)
+        u[:, :, 3] = c_pfoa0[:, None]
+    else:
+        raise ValueError(f"c_pfoa0 has shape {c_pfoa0.shape}, expected scalar or (B,) where B={u.shape[0]}")
     return u
 
 def make_constant_u_traj(T, c_so3_value, c_cl, c_pfoa0, dtype=tf.float32):

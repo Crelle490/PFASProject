@@ -14,8 +14,7 @@ predictor/__pycache__/
 
 # Generated or intermediate outputs
 checkpoints/
-results/
-plots_device_activity.py
+
 
 # Optional or alternative scripts
 backup.py

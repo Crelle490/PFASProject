@@ -52,7 +52,6 @@ jit_tmp*.so
 *.tmp
 
 # Images / plots
-*.png
 *.jpg
 *.jpeg
 *.svg
